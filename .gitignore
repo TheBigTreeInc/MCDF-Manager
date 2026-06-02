@@ -1,0 +1,11 @@
+node_modules/
+dist/
+src-tauri/target/
+.DS_Store
+*.log
+.env
+.env.*
+
+# Local MCDF central registry test data
+mcdf-registry-data/
+.local-mcdf-registry-test/

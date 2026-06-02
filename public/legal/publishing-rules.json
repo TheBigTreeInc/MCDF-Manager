@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "rules_kind": "mcdf-publishing-rules",
+  "publishing_rules_version": "2026-06-02.1",
+  "publishing_rules_content_id": "publishing-rules-2026-06-02.1",
+  "summary": "Before publishing, users confirm they are allowed to share the package, preview image, description, tags, source links, and all included mod layers. Private, stolen, leaked, restricted, unauthorized, misleading, malicious, or incorrectly marked adult/sensitive content is not allowed.",
+  "source_document": "docs/PUBLISHING_RULES.adoc",
+  "rules": [
+    "Only publish content you own, created, have permission to share, or are otherwise allowed to distribute.",
+    "Do not publish stolen, leaked, private, restricted, paid, commissioned, or creator-distributed content unless redistribution is allowed.",
+    "Do not publish malicious files, deceptive metadata, impersonation, false ownership claims, or content that violates creator terms, community rules, platform rules, law, or another person's rights.",
+    "Mark adult, sexual, sensitive, age-sensitive, or restricted content accurately where the product supports those labels.",
+    "Published uploads are not private personal storage. Do not upload anything that must remain private, confidential, or restricted."
+  ]
+}

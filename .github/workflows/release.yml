@@ -1,0 +1,230 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      create_tag: ${{ steps.meta.outputs.create_tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Calculate release tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+            CREATE_TAG="false"
+            PRERELEASE="false"
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+            TAG_NAME="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
+            CREATE_TAG="true"
+            PRERELEASE="true"
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "release_name=MCDF Manager ${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "create_tag=${CREATE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"
+
+  build-tauri:
+    name: Build Tauri (${{ matrix.name }})
+    needs: metadata
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            platform: ubuntu-22.04
+            args: ''
+            target: ''
+          - name: windows-x86_64
+            platform: windows-latest
+            args: ''
+            target: ''
+          - name: macos-aarch64
+            platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+            target: x86_64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Node dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build ${{ matrix.args }}
+
+      - name: Upload release bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcdf-manager-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/**
+            src-tauri/target/${{ matrix.target }}/release/bundle/**
+
+
+  # This workflow intentionally packages only the MCDF Manager desktop client bundles.
+
+  publish-release:
+    name: Publish GitHub release
+    needs:
+      - metadata
+      - build-tauri
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag for main build
+        if: needs.metadata.outputs.create_tag == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_NAME="${{ needs.metadata.outputs.tag_name }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Tag ${TAG_NAME} already exists; keeping it."
+          else
+            git tag "${TAG_NAME}" "${GITHUB_SHA}"
+            git push origin "${TAG_NAME}"
+          fi
+
+      - name: Download built bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Package platform artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p packaged-assets
+
+          shopt -s nullglob
+          for artifact_dir in release-assets/*; do
+            if [[ -d "${artifact_dir}" ]]; then
+              artifact_name="$(basename "${artifact_dir}")"
+              echo "Packaging ${artifact_name}"
+              (cd "${artifact_dir}" && zip -r "${GITHUB_WORKSPACE}/packaged-assets/${artifact_name}.zip" .)
+            fi
+          done
+
+          echo "Packaged assets:"
+          find packaged-assets -type f -maxdepth 1 -print
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.metadata.outputs.tag_name }}
+          RELEASE_NAME: ${{ needs.metadata.outputs.release_name }}
+          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          prerelease_arg=()
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            prerelease_arg=(--prerelease)
+          fi
+
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Release ${TAG_NAME} already exists; updating title/flags and uploading new attempt assets."
+            gh release edit "${TAG_NAME}" \
+              --title "${RELEASE_NAME}" \
+              "${prerelease_arg[@]}"
+          else
+            gh release create "${TAG_NAME}" \
+              --title "${RELEASE_NAME}" \
+              --generate-notes \
+              "${prerelease_arg[@]}"
+          fi
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.metadata.outputs.tag_name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          for asset in packaged-assets/*.zip; do
+            base="$(basename "${asset}" .zip)"
+            upload_name="${base}-attempt.${RUN_ATTEMPT}.zip"
+            cp "${asset}" "packaged-assets/${upload_name}"
+            gh release upload "${TAG_NAME}" "packaged-assets/${upload_name}"
+          done
