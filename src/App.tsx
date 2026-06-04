@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type MouseEvent } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 
@@ -521,6 +521,14 @@ function entryIsAdult(entry: Pick<LocalMcdfEntry, "is_adult" | "tags">): boolean
 }
 function packageIsAdult(pkg: Pick<PublicIndexPackageSummary, "is_adult" | "tags"> | Pick<PublicPackageRecord, "is_adult" | "tags">): boolean {
   return Boolean((pkg as { is_adult?: boolean; tags?: string[] }).is_adult || isAdultByTags((pkg as { tags?: string[] }).tags));
+}
+
+function displayImageSrc(image?: string | null): string | null {
+  if (!image) return null;
+  const trimmed = image.trim();
+  if (!trimmed) return null;
+  if (/^(https?:|data:|blob:|asset:|tauri:)/i.test(trimmed)) return trimmed;
+  return convertFileSrc(trimmed);
 }
 
 type RemoteMcdfScanResult = {
@@ -1547,7 +1555,7 @@ function AddMcdfEntryModal({ open, onClose, addOperation, updateOperation, finis
         ) : draft ? (
           <div className="add-entry-review-grid">
             <button type="button" className="entry-detail-preview entry-detail-preview-button add-preview-picker" disabled={loading} onClick={chooseDraftPreview} title="Choose a preview image">
-              {draft.previewPath ? <img src={draft.previewPath} alt={draft.title || draft.fileName} /> : <div className="preview-placeholder large">✧</div>}
+              {draft.previewPath ? <img src={displayImageSrc(draft.previewPath) || undefined} alt={draft.title || draft.fileName} /> : <div className="preview-placeholder large">✧</div>}
               <span className="preview-edit-chip">{draft.previewPath ? "Change picture" : "Add picture"}</span>
             </button>
             <div className="add-entry-review-form">
@@ -1653,11 +1661,12 @@ function OnlineLibraryPanel({ addOperation, finishOperation }: PanelProps & { sh
     });
   const combinedEntries = [...subscribedIndexEntries, ...entries];
   const selectedEntry = combinedEntries.find((entry) => entry.id === selectedId) ?? null;
+  const entryHasLocalFile = (entry: LocalMcdfEntry | null | undefined): boolean => Boolean(entry && (entry.source_type === "local_file" || !entry.source_type) && entry.local_path && entry.storage_state !== "subscribed" && entry.storage_state !== "removed");
   const entryListedPublicly = (entry: LocalMcdfEntry | null | undefined): boolean => Boolean(entry?.package_hash_blake3 && publicPackagesByHash.has(entry.package_hash_blake3) && entry.storage_state === "online" && (entry.visibility || "public") === "public");
   const entryPublicLabel = (entry: LocalMcdfEntry): string => entryListedPublicly(entry) ? "public" : entry.storage_state === "removed" ? "removed" : entry.storage_state === "subscribed" ? "not downloaded" : "not listed";
-  const entryPublicClass = (entry: LocalMcdfEntry): string => entryListedPublicly(entry) ? "status-good" : entry.storage_state === "removed" ? "status-bad" : entry.storage_state === "server" ? "status-warn" : "status-neutral";
-  const entryStatusLabel = (entry: LocalMcdfEntry): string => entry.storage_state === "online" && !entryListedPublicly(entry) ? "not listed" : stateLabel(entry.storage_state);
-  const entryStatusClass = (entry: LocalMcdfEntry): string => entry.storage_state === "online" && !entryListedPublicly(entry) ? "status-warn" : stateClass(entry.storage_state);
+  const entryPublicClass = (entry: LocalMcdfEntry): string => entryListedPublicly(entry) ? "status-good" : entry.storage_state === "removed" ? "status-bad" : entry.storage_state === "server" || entry.storage_state === "online" ? "status-warn" : "status-neutral";
+  const entryStatusLabel = (entry: LocalMcdfEntry): string => entryHasLocalFile(entry) ? "local" : entry.storage_state === "online" && !entryListedPublicly(entry) ? "not listed" : stateLabel(entry.storage_state);
+  const entryStatusClass = (entry: LocalMcdfEntry): string => entryHasLocalFile(entry) ? "status-neutral" : entry.storage_state === "online" && !entryListedPublicly(entry) ? "status-warn" : stateClass(entry.storage_state);
   const detailStatusPills = (entry: LocalMcdfEntry): Array<{ label: string; className: string }> => {
     const candidates = [
       { label: entryStatusLabel(entry), className: entryStatusClass(entry) },
@@ -1983,7 +1992,7 @@ function OnlineLibraryPanel({ addOperation, finishOperation }: PanelProps & { sh
       preview_image_path: publishPreviewPath,
       is_adult: publishIsAdult,
       visibility: publishVisibility,
-      notes: ["Local metadata updated. Publish again to push these details to the server/index."],
+      notes: ["Local metadata updated."],
     });
   };
 
@@ -2128,7 +2137,7 @@ function OnlineLibraryPanel({ addOperation, finishOperation }: PanelProps & { sh
                   <span>{compactSourceLabel(entry)}</span>
                   <span>{entry.file_count}</span>
                   <span>{formatBytes(entry.total_file_bytes)}</span>
-                  <span className={`table-tick ${entryListedPublicly(entry) ? "yes" : "no"}`}>{entryListedPublicly(entry) ? "✓" : "—"}</span>
+                  <span className={`table-tick ${entryPublicClass(entry) === "status-good" ? "yes" : entryPublicClass(entry) === "status-bad" ? "no" : "partial"}`}>{entryPublicLabel(entry)}</span>
                   <span className={`table-tick ${entryStatusClass(entry) === "status-good" ? "yes" : entryStatusClass(entry) === "status-bad" ? "no" : "partial"}`}>{entryStatusLabel(entry)}</span>
                   <span className={`table-tick ${entryIsAdult(entry) ? "adult" : "no"}`}>{entryIsAdult(entry) ? "18+" : "—"}</span>
                   <span className="table-tags">{localEntryManualTags(entry).slice(0, 2).map((tag) => `#${tag}`).concat(localEntrySystemLabels(entry).slice(0, 3)).join(" · ") || "—"}</span>
@@ -2159,7 +2168,7 @@ function OnlineLibraryPanel({ addOperation, finishOperation }: PanelProps & { sh
         <aside className="right-stack elevated-detail-pane">
           <Panel className="entry-detail-card">
             <button type="button" className="entry-detail-preview entry-detail-preview-button" disabled={loading || selectedEntry.storage_state === "subscribed" || selectedEntry.storage_state === "removed"} onClick={choosePreview} title="Change MCDF preview image">
-              {publishPreviewPath ? <img src={publishPreviewPath} alt={publishTitle || selectedEntry.original_filename} /> : <div className="preview-placeholder large">✧</div>}
+              {publishPreviewPath ? <img src={displayImageSrc(publishPreviewPath) || undefined} alt={publishTitle || selectedEntry.original_filename} /> : <div className="preview-placeholder large">✧</div>}
               {selectedEntry.storage_state !== "subscribed" && selectedEntry.storage_state !== "removed" && <span className="preview-edit-chip">Change picture</span>}
             </button>
             <div className="entry-detail-pill-row">
@@ -2597,7 +2606,7 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
         <div className="panel-title-row refined-modal-head"><div><div className="eyebrow">Profile</div><h2>Public profile</h2></div><button type="button" className="modal-icon-close" onClick={onClose} aria-label="Close">×</button></div>
         <div className="profile-editor-grid">
           <button type="button" className="entry-detail-preview entry-detail-preview-button profile-picture-picker" onClick={chooseProfileImage} title="Choose profile picture">
-            {profile.image ? <img src={profile.image} alt={profile.displayName || "Profile"} /> : <div className="preview-placeholder large">✧</div>}
+            {profile.image ? <img src={displayImageSrc(profile.image) || undefined} alt={profile.displayName || "Profile"} /> : <div className="preview-placeholder large">✧</div>}
             <span className="preview-edit-chip">{profile.image ? "Change picture" : "Add picture"}</span>
           </button>
           <div className="form-grid single-column">
@@ -3117,7 +3126,8 @@ function tagsFromText(text: string): string[] {
 
 function PreviewTile({ image, title, adult }: { image?: string | null; title: string; adult?: boolean }) {
   const [imageFailed, setImageFailed] = useState(false);
-  const safeImage = image && !imageFailed ? image : null;
+  useEffect(() => setImageFailed(false), [image]);
+  const safeImage = image && !imageFailed ? displayImageSrc(image) : null;
   return (
     <div className={`preview-tile ${safeImage ? "has-image" : "no-image"}`}>
       {safeImage ? <img src={safeImage} alt={title} onError={() => setImageFailed(true)} /> : <div className="preview-placeholder">✧</div>}
