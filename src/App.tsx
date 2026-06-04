@@ -1504,7 +1504,7 @@ function AddMcdfEntryModal({ open, onClose, addOperation, updateOperation, finis
         manifest_url: existing?.manifest_url || null,
         download_url: existing?.download_url || null,
         notes: draft.notes || [
-          "Added as a local MCDF. No files were uploaded.",
+          "Added as a local MCDF. Registration is not required and no files were uploaded.",
           "Package inspection was only used to prepare local labels, counts, and editable library details.",
           ...(draft.info.description ? ["MCDF description was copied into the local entry."] : []),
         ],
@@ -1529,8 +1529,8 @@ function AddMcdfEntryModal({ open, onClose, addOperation, updateOperation, finis
             <div className="remote-add-card refined-source-card">
               <div className="eyebrow">Local file</div>
               <h3>Choose an MCDF from this computer</h3>
-              <p className="empty-small">Adds a local library entry. Nothing is uploaded until you publish it.</p>
-              <PrimaryButton disabled={loading} onClick={chooseLocalMcdf}>{loading ? "Reading MCDF…" : "Choose MCDF…"}</PrimaryButton>
+              <p className="empty-small">Adds a local library entry on this device. Registration is not required.</p>
+              <PrimaryButton disabled={loading} title="Adds this MCDF to the local library. Registration is not required." onClick={chooseLocalMcdf}>{loading ? "Reading MCDF…" : "Choose MCDF…"}</PrimaryButton>
             </div>
             <div className="remote-add-card refined-source-card">
               <div className="eyebrow">Remote source</div>
@@ -1551,7 +1551,7 @@ function AddMcdfEntryModal({ open, onClose, addOperation, updateOperation, finis
               <span className="preview-edit-chip">{draft.previewPath ? "Change picture" : "Add picture"}</span>
             </button>
             <div className="add-entry-review-form">
-              <div className="modal-user-copy compact">Review the library entry. These details stay local until you publish.</div>
+              <div className="modal-user-copy compact">Review the library entry. These details stay local.</div>
               <label><span>Display name</span><Field value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Character or MCDF name" /></label>
               <label><span>Description</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Short description for your library" rows={4} /></label>
               <label><span>Tags</span><Field value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="Optional tags, comma separated" /></label>
@@ -1994,7 +1994,7 @@ function OnlineLibraryPanel({ addOperation, finishOperation }: PanelProps & { sh
       return;
     }
     if (!hasStoredClientAuth()) {
-      setError("Authorize and connect or import an existing .mcdfauth package before publishing.");
+      setError("Publishing requires a registered profile. This MCDF remains available in your local library.");
       return;
     }
     if (!publishingRulesAccepted) {
