@@ -2,6 +2,8 @@ name: Release MCDF Manager client
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'client-v*'
   workflow_dispatch:
@@ -73,18 +75,36 @@ jobs:
             CREATE_TAG="false"
             PRERELEASE="false"
             DRAFT="false"
+            REQUIRE_EXACT_VERSION="true"
+          elif [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" == "main" ]]; then
+            BASE_VERSION="$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')"
+            VERSION="${BASE_VERSION}-main.${GITHUB_RUN_NUMBER}"
+            TAG_NAME="client-main-${GITHUB_RUN_NUMBER}"
+            CREATE_TAG="true"
+            PRERELEASE="true"
+            DRAFT="false"
+            REQUIRE_EXACT_VERSION="false"
           else
             VERSION="${{ inputs.version }}"
             TAG_NAME="client-v${VERSION}"
             CREATE_TAG="true"
             PRERELEASE="${{ inputs.prerelease }}"
             DRAFT="${{ inputs.draft }}"
+            REQUIRE_EXACT_VERSION="true"
           fi
 
-          RELEASE_VERSION="${VERSION}" REQUIRE_PACKAGE_VERSION_MATCH=true REQUIRE_CHANGELOG_VERSION_MATCH=true pnpm run validate:release-version
+          if [[ "${REQUIRE_EXACT_VERSION}" == "true" ]]; then
+            RELEASE_VERSION="${VERSION}" REQUIRE_PACKAGE_VERSION_MATCH=true REQUIRE_CHANGELOG_VERSION_MATCH=true pnpm run validate:release-version
+          else
+            RELEASE_VERSION="${VERSION}" pnpm run validate:release-version
+          fi
 
           echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
-          echo "release_name=MCDF Manager ${VERSION}" >> "${GITHUB_OUTPUT}"
+          if [[ "${PRERELEASE}" == "true" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            echo "release_name=MCDF Manager ${VERSION} — Main branch build" >> "${GITHUB_OUTPUT}"
+          else
+            echo "release_name=MCDF Manager ${VERSION}" >> "${GITHUB_OUTPUT}"
+          fi
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "create_tag=${CREATE_TAG}" >> "${GITHUB_OUTPUT}"
           echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"

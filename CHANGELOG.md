@@ -1,6 +1,17 @@
 # Changelog
 
 
+## fix124-main-branch-release-assets
+
+### Changed
+- Main branch pushes now create a prerelease GitHub Release with official MCDF Manager desktop assets.
+- Main branch release tags use the GitHub run number, such as `client-main-124`, while asset versions use the package version plus the run number, such as `0.1.0-main.124`.
+- Main branch prereleases no longer require a matching changelog version entry, while official `client-v*` releases still require the tag version to match `package.json` and `CHANGELOG.md`.
+- The temporary build artifact workflow is now manual-only to avoid duplicate full platform builds on every main branch push.
+
+### Fixed
+- Main branch builds now attach generated release files, including platform zips, `checksums.txt`, and `release-manifest.json`, instead of leaving generated files only inside workflow artifacts.
+
 ## 0.1.0 — Client release pipeline
 
 ### Added
