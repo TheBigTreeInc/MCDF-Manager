@@ -1,6 +1,13 @@
 # Changelog
 
 
+
+## 0.1.0-main release manifest argument fix
+
+### Fixed
+- Main branch prerelease packaging now writes `release-manifest.json` correctly when the manifest script is called through `pnpm run`.
+- The release manifest script now ignores pnpm's `--` separator and reports a clear error when the packaged asset directory is missing.
+
 ## fix124-main-branch-release-assets
 
 ### Changed
