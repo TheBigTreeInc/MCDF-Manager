@@ -1,135 +1,183 @@
 # MCDF Manager
 
-MCDF Manager is a desktop library and registry browser for MCDF character packages. It keeps character files organized locally, connects to The Eorzea Exchange for public listings, and gives registered publishers a controlled flow for sharing entries with the community.
+**Because your character packages deserve better than a folder full of mystery files.**
 
-## What it does
+![Status](https://img.shields.io/badge/status-active-7c3aed)
+![Client](https://img.shields.io/badge/client-Windows%20%7C%20macOS%20%7C%20Linux-2563eb)
+![FFXIV](https://img.shields.io/badge/for-Final%20Fantasy%20XIV-b45309)
+![Plugin](https://img.shields.io/badge/game%20plugin-no-16a34a)
+![Exchange](https://img.shields.io/badge/Eorzea%20Exchange-public%20sharing-9333ea)
+![Storage](https://img.shields.io/badge/shared%20storage-deduplicated-059669)
+![Policy](https://img.shields.io/badge/sharing-policy%20checked-dc2626)
 
-- Adds MCDF files from disk, Google Drive links, and direct HTTPS links.
-- Keeps a local library with names, descriptions, tags, 18+ markers, labels, and preview images.
-- Shows detected package labels separately from user tags.
-- Browses The Eorzea Exchange through the public registry index.
-- Downloads public entries without registration.
-- Exports local MCDF files back out of the library.
-- Shares public Exchange entries through a copied share reference.
-- Keeps subscribed entries visible in the library, including entries that are no longer listed.
-- Registers publisher profiles for publishing, reports, access requests, profile sync, and community services.
-- Publishes updates through an authenticated profile.
+MCDF Manager helps you organize, inspect, export, and share `.mcdf` character packages without turning your collection into a pile of duplicate archives.
 
-## Local library
+If you have ever tried to share an MCDF with someone, keep several versions of the same look, or remember which file contains which variation, MCDF Manager is built for that problem.
 
-The library works without registration. Local entries stay on the computer until the user publishes them. Picture changes, titles, notes, tags, and 18+ markers are saved as local library metadata. The original MCDF file is not modified.
+You can keep your character packages together, see what is inside them, publish approved entries to the Eorzea Exchange, and avoid uploading the same shared files over and over again.
 
-Library status uses two separate meanings:
+MCDF Manager is **not a Dalamud plugin**, **not a game plugin**, and **does not run inside Final Fantasy XIV**. It is a separate desktop application for managing MCDF packages outside the game.
 
-- **Status** describes local availability, such as `local` or `subscribed`.
-- **Public** describes Exchange visibility, such as `in index`, `not listed`, or `removed`.
+---
 
-Library entries group their main actions together: share a public Exchange reference, export or download the MCDF, publish the entry, or remove it from the local library. Moderation checks are enforced by the registry during publishing. Admin users can refresh a selected entry against the moderation blocklist from the entry detail panel.
+## Share MCDF packages more easily
+
+Sharing MCDF files is often messy.
+
+Files are large, previews get separated from the package, people lose track of which version is current, and every small variation can become another full-size archive.
+
+MCDF Manager gives you a clearer sharing flow:
+
+* import an MCDF;
+* inspect what is inside;
+* add title, description, tags, preview, and 18+ status;
+* check whether files are already known by the registry;
+* publish approved entries to the Eorzea Exchange;
+* share the public Exchange entry with someone else.
+
+Instead of sending around unexplained files, you can share a proper entry that shows what the package is, what it contains, and whether it is available.
+
+---
+
+## Save space when you keep variations
+
+Many MCDF collections contain repeated files.
+
+For example, you might have 15 versions of the same character model with slightly different textures, poses, colors, accessories, or metadata. Stored as normal MCDF files, each variation can carry another copy of the same large model and texture data.
+
+MCDF Manager works toward a content-addressed library model. Files are identified by BLAKE3 hashes, so repeated internal files can be recognized as the same content.
+
+That makes it possible to understand storage like this:
+
+```text
+15 MCDF variations
+  same base model
+  same body textures
+  same materials
+  different small changes
+```
+
+Instead of treating every MCDF as a completely separate blob, MCDF Manager can track:
+
+* original MCDF size;
+* unpacked content size;
+* shared files;
+* unique files;
+* how much data is reused;
+* how much new storage a variation actually adds.
+
+The result is a library that understands your collection instead of just storing another copy of everything.
+
+---
+
+## Keep your collection together
+
+MCDF Manager gives you one place to manage the packages you care about.
+
+You can:
+
+* keep character packages in a library;
+* attach previews;
+* edit names, descriptions, tags, and 18+ status;
+* see whether an entry is private, local-only, public, or blocked from sharing;
+* export/download an MCDF again later;
+* publish entries when they are allowed;
+* remove entries you no longer need.
+
+The goal is simple: your MCDFs stay understandable, searchable, and reusable.
+
+---
+
+## Know what is inside before you share
+
+Before you publish or pass around a package, MCDF Manager can inspect it.
+
+You can see:
+
+* package metadata;
+* internal files;
+* file categories such as textures, models, materials, and skeletons;
+* file sizes;
+* BLAKE3 hashes;
+* registry availability;
+* sharing status;
+* blocked or restricted files.
+
+That means you can tell the difference between “this is safe to share”, “this is only for my library”, and “this file is blocked by moderation or creator restriction.”
+
+---
 
 ## The Eorzea Exchange
 
-The Eorzea Exchange is the public registry view. It reads public listing metadata, preview information, labels, and download options from the registry index. Browsing and downloading public entries do not require registration.
+The Eorzea Exchange is the public listing area for approved shared MCDF entries.
 
-## Publishing
+When you publish to the Exchange, MCDF Manager checks the package against registry and moderation data. If a package contains restricted, blocked, or potentially illegal content, publishing is blocked and the reason is shown.
 
-Publishing requires a registered profile. The publishing flow keeps a local entry editable first, then publishes the selected metadata and preview when the user chooses to share it.
+| Status                  | What it means                                                                |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| **Can share**           | This entry can be shared through MCDF Manager.                               |
+| **Local only**          | This entry is in your library, but not listed publicly.                      |
+| **Disallowed**          | This entry contains content that cannot be uploaded or shared.               |
+| **Restricted**          | A file matches a creator or moderation restriction.                          |
+| **Potentially illegal** | A moderator marked a file hash or combination as legally unsafe for sharing. |
 
-## Creator and moderator hash protection
+When sharing is blocked, MCDF Manager shows the file or hash that caused the block.
 
-MCDF Manager supports moderation blocks for package hashes and individual layer/file BLAKE3 hashes. A moderator can mark hashes as restricted, blocked by policy, or potentially illegal from the Admin moderation blocklist. Local library entries remain available on the user's computer, but entries with blocked matches cannot be uploaded or shared through MCDF Manager.
+---
 
-Library list view shows the sharing classification and the package or file that caused the block. The check uses stored BLAKE3 hashes and does not upload MCDF bytes.
+## Respect creators and avoid unsafe sharing
 
-Mod creators and rights holders can provide BLAKE3 hashes for review. Approved hashes are added by moderators to the blocklist, which prevents future publishing or vault upload of matching files.
+MCDF Manager uses BLAKE3 hashes to identify files without needing to upload a full package just to check it.
 
-## Releases
+Creators and moderators can provide hashes for files that are not allowed for redistribution. When one of those hashes is found, MCDF Manager keeps the package in your library but blocks upload and public sharing.
 
-GitHub Actions builds official MCDF Manager desktop bundles for Windows, macOS, and Linux. Release assets use product names, platform names, and the client version. Each release also includes:
+This helps prevent accidental redistribution of creator-restricted, policy-blocked, or legally unsafe content.
 
-- `checksums.txt` with SHA-256 hashes for the downloadable bundles;
-- `release-manifest.json` with product, version, tag, commit, build time, asset sizes, and hashes;
-- release notes generated from the latest `CHANGELOG.md` entry.
+---
 
-Release tags for this repository use the `client-v*` prefix for public client releases. Main branch builds run CI and produce temporary Actions artifacts only; public GitHub Releases are created from `client-v*` tags or the manual release workflow.
+## What MCDF Manager is not
 
-## Client release pipeline
+MCDF Manager is not:
 
-The public client repository separates validation builds from public releases.
+* a Final Fantasy XIV plugin;
+* a Dalamud plugin;
+* a mod loader;
+* a game injection tool;
+* a tool for bypassing creator permissions;
+* a tool for redistributing blocked or restricted files.
 
-- Pull requests and main branch pushes run Client CI.
-- CI builds the frontend, validates public product text, checks the changelog, and runs `cargo check` for the Tauri/Rust command layer.
-- Main branch builds can produce temporary Actions artifacts through the build workflow.
-- Public releases are tag-based and use `client-v<version>` tags.
-- The release version comes from the tag and must match `package.json`.
-- Release notes are generated by `scripts/generate-release-notes.mjs` from the latest changelog entry.
-- Release metadata is written by `scripts/write-release-manifest.mjs`.
+It works outside the game and focuses on package inspection, collection management, registry checks, storage awareness, and approved sharing.
 
-Official release assets use these names:
+---
 
-```text
-MCDF-Manager-Windows-x86_64-v0.1.0.zip
-MCDF-Manager-Linux-x86_64-v0.1.0.zip
-MCDF-Manager-macOS-Apple-Silicon-v0.1.0.zip
-MCDF-Manager-macOS-Intel-v0.1.0.zip
-checksums.txt
-release-manifest.json
-```
+## Rules for use
 
-Before creating a new public release, update `package.json` and add a matching changelog entry for the release version.
+Use MCDF Manager to organize, inspect, and share MCDF entries that you are allowed to share.
 
-## Building from source
+Do not use MCDF Manager to upload or publish:
 
-Requirements:
+* files you do not have permission to redistribute;
+* paid, private, or creator-restricted assets;
+* packages marked as blocked by moderation;
+* files or combinations marked as potentially illegal;
+* content that violates the rules of the Exchange or the communities you participate in.
 
-- Node.js 22+
-- pnpm 9+
-- Rust stable
-- Tauri prerequisites for the target operating system
+MCDF Manager blocks known restricted hashes and moderation-blocked content from public sharing.
 
-Install dependencies:
+---
 
-```powershell
-pnpm install --no-frozen-lockfile
-```
+## Why use it?
 
-Run the desktop app in development mode:
+Because your character packages deserve better than a folder full of mystery files.
 
-```powershell
-pnpm tauri dev
-```
+MCDF Manager helps you share MCDFs in a way that is cleaner, safer, and easier to understand. It keeps your collection together, shows what is inside each package, tracks repeated files, highlights what can be shared, and blocks content that is not allowed on the Exchange.
 
-Build a desktop release:
+You stay in control of your character library, your variations, your storage, and what you choose to share.
 
-```powershell
-pnpm tauri build
-```
+---
 
-## Changelog and bug reports
+## Unofficial project notice
 
-See [CHANGELOG.md](CHANGELOG.md) for release history, fixed bugs, and known follow-up work.
+MCDF Manager is an unofficial community tool. It is not affiliated with, endorsed by, or supported by Square Enix, Creative Studio III, or the Final Fantasy XIV development team.
 
-Use GitHub Issues to report bugs. The bug report template asks for reproduction steps, MCDF Manager version, platform, and logs or screenshots.
-
-## Privacy
-
-MCDF Manager does not show private admin state, raw blob storage locations, internal file locations, or private repository details in user-facing screens. Public browsing uses the public registry index.
-
-### Library sharing status
-
-The Library list view focuses on upload/share readiness. Entries that can be shared use a quiet `Can share` state. Entries blocked by moderation show a strong `Disallowed` state and the `Blocking file` column names the package or internal file hash that prevents upload. Local/on-device storage is kept out of the main status path so the list does not repeat the same local/not-listed wording across multiple columns.
-
-### Analyze MCDF layout
-
-Analyze MCDF opens the file picker directly from the sidebar and keeps a compact action bar visible on the page. The action bar can analyze another MCDF, check registry hashes, or import the inspected MCDF into the local library without publishing it.
-
-After a file is selected, the page shows package notes, component groups, and the internal file inventory. Registry status is tri-state: before the online check runs, file rows show `not checked`; after the check, they show whether the BLAKE3 payload hash is known in the registry or missing. Long game paths and BLAKE3 hashes wrap or appear in hover text so the inspection view stays readable without horizontal scrolling.
-
-Large MCDF files take longer to open because the client safely reads archive metadata and calculates internal payload hashes. The native analyzer opens the package once for metadata and file inventory, reducing duplicate parsing work.
-
-### Selective registry upload
-
-MCDF Manager keeps a decoded package buffer in memory while it builds the internal file inventory. Each internal file stores its path, size, BLAKE3 hash, and offset inside that decoded package. When publishing, the client sends the hash manifest to the registry first. The registry replies with known, missing, and blocked hashes. The client uploads only the missing allowed file slices requested by the registry. Known files stay referenced by hash and are not uploaded again.
-
-## fix121 compile fix
-
-This source package fixes the RAM-slice selective upload build error in the Tauri command layer. The selective upload model remains the same: MCDF Manager parses the package once, keeps decoded package data available to address internal file slices, and uploads only registry-missing slices during publishing.
+Final Fantasy XIV and related names are trademarks or registered trademarks of Square Enix Holdings Co., Ltd.
