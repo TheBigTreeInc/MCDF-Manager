@@ -5,10 +5,6 @@
 ![Status](https://img.shields.io/badge/status-active-7c3aed)
 ![Client](https://img.shields.io/badge/client-Windows%20%7C%20macOS%20%7C%20Linux-2563eb)
 ![FFXIV](https://img.shields.io/badge/for-Final%20Fantasy%20XIV-b45309)
-![Plugin](https://img.shields.io/badge/game%20plugin-no-16a34a)
-![Exchange](https://img.shields.io/badge/Eorzea%20Exchange-public%20sharing-9333ea)
-![Storage](https://img.shields.io/badge/shared%20storage-deduplicated-059669)
-![Policy](https://img.shields.io/badge/sharing-policy%20checked-dc2626)
 
 MCDF Manager helps you organize, inspect, export, and share `.mcdf` character packages without turning your collection into a pile of duplicate archives.
 
