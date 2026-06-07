@@ -1,5 +1,3 @@
-Here is a more inviting GitHub `README.md` you can copy over the current one.
-
 # MCDF Manager
 
 **Collect, preview, organize, and share your Final Fantasy XIV MCDF character packages.**
