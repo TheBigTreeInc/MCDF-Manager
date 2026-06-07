@@ -712,6 +712,13 @@ type LocalLibrarySettings = {
   libraryFolderTags: string[];
 };
 const LOCAL_LIBRARY_SETTINGS_KEY = "mcdf.localLibrary.settings.v1";
+function normalizeLibraryFolderTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const normalized = value
+    .map((tag) => String(tag).trim().toLowerCase())
+    .filter(Boolean);
+  return Array.from(new Set<string>(normalized)).slice(0, 32);
+}
 function readLibrarySettings(): LocalLibrarySettings {
   try {
     const parsed = JSON.parse(
@@ -726,9 +733,7 @@ function readLibrarySettings(): LocalLibrarySettings {
       )
         ? parsed.dateDisplayMode
         : "dmy",
-      libraryFolderTags: Array.isArray(parsed.libraryFolderTags)
-        ? Array.from(new Set(parsed.libraryFolderTags.map(String).map((tag: string) => tag.trim().toLowerCase()).filter(Boolean))).slice(0, 32)
-        : [],
+      libraryFolderTags: normalizeLibraryFolderTags(parsed.libraryFolderTags),
     };
   } catch {
     return {

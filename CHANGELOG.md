@@ -1,5 +1,11 @@
 # Changelog
 
+## fix163-build-library-folder-tags
+
+### Fixed
+- Fixed the TypeScript build error in local Library settings by narrowing persisted folder tags back to `string[]` before returning settings.
+- This keeps `pnpm run build` from failing at `src/App.tsx` when strict TypeScript checks infer stored tag data as `unknown[]`.
+
 ## fix162-owner-edit-cover-studio
 
 ### Added
