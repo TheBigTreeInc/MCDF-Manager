@@ -1,5 +1,11 @@
 # Changelog
 
+## fix164-tauri-asset-protocol-build
+
+### Fixed
+- Added the required `protocol-asset` Tauri feature so Cargo builds match the asset protocol enabled in `src-tauri/tauri.conf.json`.
+- This fixes the GitHub Actions Rust/Tauri build failure that reported: `Please run tauri dev or tauri build or add the protocol-asset feature`.
+
 ## fix163-build-library-folder-tags
 
 ### Fixed
