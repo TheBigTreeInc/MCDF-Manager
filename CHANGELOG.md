@@ -1,5 +1,289 @@
 # Changelog
 
+## fix162-owner-edit-cover-studio
+
+### Added
+- Exchange owner edit now uses a richer listing-studio modal with a cover preview panel, stronger marketplace copy, and a replace-cover-image action.
+- Owner edit can send a replacement preview image to the registry server while keeping package contents unchanged.
+
+### Changed
+- The modal now explains the difference between cosmetic listing edits and package-content fixes, with a delete-and-republish action available from the same flow.
+- Exchange selection no longer clears the active detail record before loading the selected package, reducing open/close flicker after failed edits.
+
+## fix161-owner-edit-modal-stability
+
+### Changed
+- Exchange owner editing now opens a modal with title, description, tags, visibility, and 18+ controls instead of browser prompt dialogs.
+- The edit modal explains that preview-image or package-content fixes should be done by deleting the Exchange listing and republishing from the corrected local entry.
+
+### Fixed
+- Selecting an Exchange entry now explicitly reopens and keeps the detail drawer open after loading the selected package record.
+- Exchange detail outside-click handling now ignores active package loads and edit modals so an edit error cannot leave the selected entry immediately closing.
+
+## fix160-owner-edit-delete-exchange
+
+### Added
+- Exchange detail view now shows owner/admin listing controls when the current publisher identity owns the selected package or an admin token is present.
+- Owners can edit published title, description, tags, 18+ flag, and visibility from MCDF Manager.
+- Owners can delete their own Exchange listing from the public index without using admin moderation tooling.
+
+### Changed
+- Owner edit/delete actions send the local publisher certificate headers to the registry server so the server can enforce ownership instead of trusting the UI.
+
+## fix159-layer-table-resizable-columns
+
+### Changed
+- MCDF layer inventory table now places the download action first so exports are visible without widening the app window.
+- Layer table columns can be resized from the header.
+- Layer table rows stay inside the modal with internal scrolling instead of pushing the application wider.
+
+
+## fix158 — Exchange cleanup, saved lists, and local storage usage
+
+- Removed visible MCDF component/part snippets from The Eorzea Exchange cards and details.
+- Kept Exchange entries focused on title, creator, preview, tags, size, and action state.
+- Clarified favorites and creator follows as local saved lists.
+- Added a Settings section to review and clear favorite entries, followed creators, and tracked Exchange entries.
+- Added local disk usage in Settings for app home, library, Exchange cache, and downloads folders.
+
+## fix157 — Layer inventory table polish
+
+- Changed the MCDF layer viewer into a cleaner table-style inventory.
+- Added plain text layer type and name columns.
+- Shortened long layer paths with tooltips to prevent overflow.
+- Replaced the text download button with a compact download icon action.
+
+
+## fix156-library-layers-ctrl-remove
+
+- Fixed the Library file-count action so it opens a stable MCDF layers modal instead of breaking the app view.
+- Added per-layer download/export from local MCDF library entries.
+- Hid the normal-user moderation-active indicator from the Library toolbar.
+- Made remove actions require holding Ctrl while clicking so destructive removal is intentional.
+
+
+## fix155 — Offline service indicator
+
+### Added
+- Added a top-bar service status badge when the registry or public Exchange index is offline.
+- MCDF Manager now keeps local Library and Analyze workflows available while remote services are unavailable.
+- Added periodic registry and public index checks with browser online/offline event handling.
+
+### Changed
+- Remote service failures are visible without blocking local MCDF work.
+
+
+## fix154 — Share codes, layer downloads, and library import polish
+
+### Added
+- Share actions now copy an MCDF Manager share code in the form `mcdf.thebigtree.life:<id>` instead of raw GitHub implementation paths.
+- Add MCDF now includes a shared/bulk import card for one or more share codes with an optional tag applied to all imported entries.
+- Library file counts now open a layer inventory modal.
+- Local MCDF layer inventory supports downloading individual internal files back to the machine.
+
+### Changed
+- Library details stay as an overlay drawer and avoid normal moderation-management controls in the user-facing detail pane.
+- Completed transfer/event rows clear more quickly after finishing.
+- Publish date copy now reads `Publish on: <date>`.
+
+## fix153 — Library overlay, tag folders, transfer cleanup, Exchange previews
+
+- Library entry details now open as an overlay drawer, so selecting an MCDF no longer resizes or shifts the underlying library list.
+- Finished transfer rows now clear automatically after a short delay; failed rows stay longer for troubleshooting and then clean up too.
+- Added Library tag folders: filter by any tag, pin a tag as a folder, and unpin folders without moving files on disk.
+- Exchange preview paths from the public index are now used when available so published registry images can render in cards and detail views.
+
+## fix152 — Fixed registry endpoint
+
+- MCDF Manager now uses the fixed public registry endpoint `http://mcdf.thebigtree.life:48443`.
+- The registry endpoint is no longer configurable in the client UI or through legacy local settings.
+- Legacy localhost, bare-port, and imported `.mcdfauth` archive-host values are ignored so publishing cannot silently fall back to `127.0.0.1`.
+- The Tauri URL resolver now rejects localhost registry URLs in this public client build.
+
+## fix151 — Publish URL hardening
+
+- File uploads now always use the configured registry origin instead of trusting server-returned absolute upload URLs.
+- Job polling URLs are normalized through the configured registry origin, so old server responses cannot send the client to `127.0.0.1`.
+- Publishing diagnostics now align with the registry URL shown in Settings.
+
+
+## fix150 — Publish upload URL normalization
+
+- Publish now rewrites registry-returned localhost upload links to the configured registry server origin.
+- Missing-file uploads no longer fail when the server returns an internal `127.0.0.1` upload URL.
+- Error diagnostics remain attached to the publish step when an upload endpoint cannot be reached.
+
+## fix149-publish-error-diagnostics
+
+### Fixed
+- Publish errors now include actual context for troubleshooting, including server URL, preview path, token state, publisher key/certificate state, and the entry being published.
+- Multiline publisher certificates are no longer sent as raw HTTP header values, which caused local request-builder failures before the publish request reached the registry.
+- Compatibility publish metadata now uses a header-safe hex fallback when the metadata contains unsupported characters or is too large for a normal header.
+- Error details now explain header-builder failures as a publish request construction problem instead of blaming the preview image alone.
+
+## fix148-error-log-string-compile-fix
+
+### Fixed
+- Fixed the Vite/React compile error caused by multiline error-log text being emitted as unterminated string literals.
+- Actionable error details now use escaped newline text so MCDF Manager can start normally while still showing a readable structured error log.
+
+## fix147-actionable-error-details
+
+### Fixed
+- Preview/publish errors no longer show only the vague `builder error` message.
+- Error details now include a structured log with a summary, what happened, likely cause, things to try, and the raw technical error.
+- Registry publish request failures now include the failed step, such as file probe, missing-file upload, package registration, or compatibility MCDF upload.
+
+## fix146-token-save-admin-pane-error-details
+
+### Fixed
+- Server token entry now stays editable until the token is actually saved.
+- Saving a token now refreshes the Admin pane immediately after success.
+- Token save errors now remain visible instead of pretending the token was configured.
+- Error details modal alignment is cleaner and easier to read.
+
+## fix145-navigation-and-preview-publish-error
+
+### Changed
+- Renamed the navigation label **Analyze MCDF** to **Analyze**.
+- Changed the library navigation label from **LIBRARY** to **Library**.
+
+### Fixed
+- Compatibility publishing no longer fails with an unhelpful `builder error` when a preview image makes the metadata header too large.
+- The compatibility upload path now reports clearer request-build/send errors.
+
+
+## fix144 — Mythgrove top-bar title font
+
+### Changed
+- Top-bar page titles now prefer the Mythgrove serif typeface, with Fantasy Magist and other serif fallbacks when the font is not available.
+- Added optional app font asset paths for licensed builds: `public/fonts/MythgroveRegular.otf` and `public/fonts/MythgroveSlanted.otf`.
+
+## fix143 — Fantasy Magist top-bar titles
+
+### Changed
+- Top-bar page titles now use `Fantasy Magist` when that serif typeface is installed or bundled by the build environment.
+- Added serif fallbacks so the title remains readable when the font is not available.
+
+## fix142 — Auth migration and registration routing
+
+### Added
+- Added `scripts/Build-MCDFAuthFromLegacyConfig.ps1` to build a `.mcdfauth` migration package from a legacy config or explicit publisher key values.
+
+### Changed
+- Clicking the unregistered identity area now opens the Register new account flow instead of the profile editor.
+- Profile copy now describes the registry server as the owner of the public publisher profile, with the client keeping only a local identity cache for signing and migration export.
+
+### Fixed
+- Unregistered users are no longer sent to the profile editor when they need to register or import an existing identity.
+
+
+## fix141 — Faster inverted preview drag
+
+- Preview framing drag movement is now faster and inverted so the picture moves naturally inside the frame.
+- The preview frame now uses a four-way move cursor and center move indicator while positioning the image.
+
+## fix140 — Block browser function keys
+
+- Blocked browser/WebView function-key shortcuts inside MCDF Manager so F1-F12 no longer trigger app-unrelated actions such as browser help, refresh, caret browsing, fullscreen, or developer shortcuts.
+- Alt and OS-level combinations remain untouched so normal window/system shortcuts still work.
+
+## fix139 — Drag preview framing
+
+- Added direct drag positioning inside the Frame picture preview area.
+- Users can now drag the image to reposition it, use the mouse wheel to zoom, or use the in-frame arrow controls for small adjustments.
+- The image itself no longer starts browser drag behavior while framing.
+
+## fix138 — Integrated wheel preview framing
+
+- Replaced the separate preview framing sliders with controls integrated into the image frame.
+- The framing modal now uses mouse wheel scrolling to zoom and four in-frame arrow buttons to move the image.
+- Removed the explanatory text under the Frame picture title so the modal focuses on the preview and Apply action.
+
+## fix137 — Integrated preview framing modal
+
+- Preview framing now opens as an interactive modal instead of sitting as a separate side panel beside the Add MCDF form.
+- The Add MCDF image box stays at a fixed size and opens the framing tool when a picture is selected.
+- Added an explicit Apply picture frame action so crop changes are confirmed before returning to the Add MCDF review form.
+- Library entry preview framing uses the same modal flow for a more consistent image-editing experience.
+
+## fix136 — Preview framing controls
+
+- Add MCDF preview images now stay inside a fixed portrait frame so the modal layout does not change when a picture is selected.
+- Added preview framing controls for zoom, horizontal position, and vertical position so users can choose the best crop for an MCDF entry.
+- Library preview tiles and the entry detail preview now reuse the saved framing data.
+
+## fix135 — Preview image display path
+
+- Enabled the Tauri local asset protocol for MCDF Manager preview cache paths so selected Add MCDF pictures can render immediately in the review modal and later in the library.
+- Added a fallback for the Add MCDF preview tile so a broken image shows the normal placeholder instead of a browser broken-image icon.
+
+## fix134 — Add MCDF preview persistence
+
+- Fixed Add MCDF preview images so selected pictures are cached before the library entry is written.
+- Disabled the Add to Library action while the selected preview image is still being saved.
+- Added a small review note showing that the chosen preview image is stored with the library entry.
+
+## 0.1.0 — fix133-add-mcdf-review-polish
+
+### Changed
+- Add MCDF now says details stay local until published.
+- The 18+ control in Add MCDF now uses the same compact review styling as the rest of the modal.
+- Detected MCDF information in the Add MCDF review step is shown as a compact table instead of loose pills.
+
+## 0.1.0 — fix132-preview-image-library-cache
+
+### Fixed
+- Preview images selected while importing an MCDF are now copied into the MCDF Manager library preview cache before the entry is saved.
+- Changing a library preview now stores the cached preview path, so the picture stays attached after switching pages, restarting the app, or moving the original image.
+
+### Changed
+- Profile and publish preview pickers use the same cached-image path as library imports.
+
+## 0.1.0 — fix131-settings-form-unification
+
+### Changed
+- Settings now use one visual form standard across storage, token, visibility, and legal sections.
+- Settings text boxes and selects now use less-rounded corners for a cleaner square form style.
+- Checkbox rows and helper text now match the compact top storage section styling.
+
+## fix130-config-file-open-existing
+
+### Fixed
+- The Settings config-file picker now opens an existing JSON config file instead of using a save dialog that asks to overwrite the selected file.
+- Updated config-file helper text so it is clear that saving Settings writes to the selected config file.
+
+## fix129-auto-import-watched-folder-copy
+
+- Renamed the auto-import setting to "Auto-import watched folders" so it is clear that the folders are watched intake locations, not the only place files can be imported from.
+- Updated the Settings helper text to explain that Add MCDF and Analyze MCDF can import from anywhere, while watched folders automatically add new `.mcdf` files while MCDF Manager is open.
+- Renamed the manual scan action to "Scan watched folders" and the picker action to "Add watched folder".
+
+## fix128-image-error-details-layout
+
+### Changed
+- Image picker and preview upload errors now show a short readable message with an underlined details link that opens a modal with the full raw error.
+- Preview image read failures now use MCDF Manager wording instead of generic builder/internal error text.
+- Library list/detail sizing now clamps to the available window width so the detail panel and action columns do not push the view wider than the app window.
+
+### Fixed
+- Fixed the compatibility upload request header wiring for publisher identity metadata.
+
+## fix126-config-auto-import-owner-polish
+
+### Added
+- Settings can now point MCDF Manager at a configurable JSON config file instead of only using the default profile path.
+- Added auto-import folders for newly added `.mcdf` files, with an optional recursive scan mode and a manual scan action in the Library.
+- Added an Admin ownership tool to move a published Exchange entry to a different owner account.
+
+### Changed
+- Renamed remaining legacy marketplace crate, binary, app-home, identifier, and metadata-header references to MCDF Manager naming.
+- Analyze MCDF progress now shows concise status updates instead of explanatory text inside the loading bar.
+- The local app config directory now defaults to `.mcdf-manager` and supports `MCDF_MANAGER_HOME` and `MCDF_MANAGER_CONFIG`.
+
+### Notes
+- The server warning `private admin state sync failed ... No such file or directory` indicates the registry container cannot start the private git clone command, usually because `git` or `ssh` is missing from the server image, or the configured runtime path/SSH key is unavailable. The client now exposes the required admin actions, but the server image still needs git/ssh/runtime-path validation in the admin/server source.
+
 
 
 ## 0.1.0-main release manifest argument fix

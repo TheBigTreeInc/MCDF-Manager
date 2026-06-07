@@ -35,6 +35,58 @@ pub fn window_close(window: tauri::Window) -> Result<(), String> {
 
 
 
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedPreviewImage {
+    pub source_path: String,
+    pub cached_path: String,
+    pub bytes: u64,
+    pub blake3: String,
+}
+
+#[command]
+pub fn import_preview_image(source_path: String) -> Result<ImportedPreviewImage, String> {
+    let source_path = source_path.trim().to_string();
+    if source_path.is_empty() {
+        return Err("Choose a preview image first.".to_string());
+    }
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Preview image does not exist: {source_path}"));
+    }
+    if !source.is_file() {
+        return Err(format!("Preview image path is not a file: {source_path}"));
+    }
+    let bytes = fs::read(&source).map_err(|error| format!("Preview image could not be read from {source_path}: {error}"))?;
+    if bytes.len() > 5 * 1024 * 1024 {
+        return Err("Preview image is too large; keep MCDF Manager previews below 5 MiB.".to_string());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png")
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    let extension = match extension.as_str() {
+        "jpg" | "jpeg" | "png" | "webp" | "gif" => extension,
+        _ => "png".to_string(),
+    };
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let preview_dir = local_cache::library_dir()?.join("previews");
+    fs::create_dir_all(&preview_dir).map_err(|error| format!("Failed to create preview image folder: {error}"))?;
+    let cached = preview_dir.join(format!("preview-{}.{}", &hash[..24], extension));
+    if !cached.exists() {
+        fs::write(&cached, &bytes).map_err(|error| format!("Failed to save preview image in MCDF Manager library: {error}"))?;
+    }
+    Ok(ImportedPreviewImage {
+        source_path,
+        cached_path: cached.to_string_lossy().to_string(),
+        bytes: bytes.len() as u64,
+        blake3: hash,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportLocalMcdfResult {
     pub source_path: String,
@@ -66,6 +118,62 @@ pub fn export_local_mcdf_file(source_path: String, output_path: String) -> Resul
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportInternalMcdfFileResult {
+    pub source_path: String,
+    pub output_path: String,
+    pub index: usize,
+    pub payload_blake3: String,
+    pub bytes_written: u64,
+}
+
+#[command]
+pub fn export_internal_mcdf_file(
+    source_path: String,
+    output_path: String,
+    file_index: usize,
+    payload_blake3: String,
+) -> Result<ExportInternalMcdfFileResult, String> {
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Local MCDF source does not exist: {source_path}"));
+    }
+    if !source.is_file() {
+        return Err(format!("Local MCDF source is not a file: {source_path}"));
+    }
+    let file = File::open(&source).map_err(|error| format!("Failed to open MCDF for layer export: {error}"))?;
+    let mut reader = BufReader::new(file);
+    let package = MCDFParser::parse_package(&mut reader).map_err(|error| format!("Failed to parse MCDF for layer export: {error}"))?;
+    let expected_hash = payload_blake3.trim().to_ascii_lowercase();
+    let info = package
+        .files
+        .iter()
+        .find(|file| file.index == file_index && file.blake3.eq_ignore_ascii_case(&expected_hash))
+        .or_else(|| package.files.iter().find(|file| file.blake3.eq_ignore_ascii_case(&expected_hash)))
+        .ok_or_else(|| format!("Internal file {file_index} / {expected_hash} was not found in this MCDF."))?;
+    let payload = package
+        .file_payload_slice(info)
+        .map_err(|error| format!("Failed to read internal MCDF file slice: {error}"))?;
+    let verified_hash = blake3::hash(payload).to_hex().to_string();
+    if !expected_hash.is_empty() && verified_hash != expected_hash {
+        return Err(format!("Internal file hash changed while exporting. Expected {expected_hash}, got {verified_hash}."));
+    }
+    let output = PathBuf::from(&output_path);
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| format!("Failed to create export folder: {error}"))?;
+        }
+    }
+    fs::write(&output, payload).map_err(|error| format!("Failed to save internal MCDF file: {error}"))?;
+    Ok(ExportInternalMcdfFileResult {
+        source_path,
+        output_path,
+        index: info.index,
+        payload_blake3: verified_hash,
+        bytes_written: payload.len() as u64,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSettingsResponse {
     pub schema_version: u32,
     pub initialized: bool,
@@ -74,6 +182,8 @@ pub struct StorageSettingsResponse {
     pub library_dir: String,
     pub exchange_cache_dir: String,
     pub downloads_dir: String,
+    pub auto_import_dirs: Vec<String>,
+    pub auto_import_recursive: bool,
     pub admin_token: Option<String>,
     pub notes: Vec<String>,
 }
@@ -88,6 +198,8 @@ impl From<local_cache::StorageSettings> for StorageSettingsResponse {
             library_dir: value.library_dir,
             exchange_cache_dir: value.exchange_cache_dir,
             downloads_dir: value.downloads_dir,
+            auto_import_dirs: value.auto_import_dirs,
+            auto_import_recursive: value.auto_import_recursive,
             admin_token: value.admin_token,
             notes: value.notes,
         }
@@ -96,11 +208,125 @@ impl From<local_cache::StorageSettings> for StorageSettingsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageSettingsUpdateRequest {
+    pub settings_file: Option<String>,
     pub library_dir: Option<String>,
     pub exchange_cache_dir: Option<String>,
     pub downloads_dir: Option<String>,
+    pub auto_import_dirs: Option<Vec<String>>,
+    pub auto_import_recursive: Option<bool>,
     pub initialized: Option<bool>,
     pub admin_token: Option<String>,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageUsageItem {
+    pub label: String,
+    pub path: String,
+    pub bytes: u64,
+    pub files: u64,
+    pub directories: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageUsageResponse {
+    pub total_bytes: u64,
+    pub items: Vec<StorageUsageItem>,
+}
+
+fn directory_usage(path: &Path) -> (u64, u64, u64) {
+    let mut bytes = 0u64;
+    let mut files = 0u64;
+    let mut directories = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries = match fs::read_dir(&current) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
+                directories = directories.saturating_add(1);
+                stack.push(entry_path);
+            } else if metadata.is_file() {
+                files = files.saturating_add(1);
+                bytes = bytes.saturating_add(metadata.len());
+            }
+        }
+    }
+    (bytes, files, directories)
+}
+
+fn storage_usage_item(label: &str, path: String) -> StorageUsageItem {
+    let path_buf = PathBuf::from(&path);
+    if !path_buf.exists() {
+        return StorageUsageItem {
+            label: label.to_string(),
+            path,
+            bytes: 0,
+            files: 0,
+            directories: 0,
+            error: Some("Folder does not exist yet.".to_string()),
+        };
+    }
+    if !path_buf.is_dir() {
+        return StorageUsageItem {
+            label: label.to_string(),
+            path,
+            bytes: 0,
+            files: 0,
+            directories: 0,
+            error: Some("Path is not a folder.".to_string()),
+        };
+    }
+    let (bytes, files, directories) = directory_usage(&path_buf);
+    StorageUsageItem {
+        label: label.to_string(),
+        path,
+        bytes,
+        files,
+        directories,
+        error: None,
+    }
+}
+
+#[command]
+pub fn get_storage_usage() -> Result<StorageUsageResponse, String> {
+    let settings = local_cache::storage_settings()?;
+    let mut items = vec![
+        storage_usage_item("App home", settings.app_home_dir),
+        storage_usage_item("My Library", settings.library_dir),
+        storage_usage_item("Exchange cache", settings.exchange_cache_dir),
+        storage_usage_item("Downloads", settings.downloads_dir),
+    ];
+    // Add each configured storage root only once. When Library/Exchange/Downloads
+    // live below the app home, the app home already includes their bytes.
+    let mut roots: Vec<(PathBuf, u64)> = items
+        .iter()
+        .filter(|item| item.error.is_none())
+        .map(|item| {
+            let raw = PathBuf::from(&item.path);
+            let path = fs::canonicalize(&raw).unwrap_or(raw);
+            (path, item.bytes)
+        })
+        .collect();
+    roots.sort_by_key(|(path, _)| path.components().count());
+    let mut counted: Vec<PathBuf> = Vec::new();
+    let mut total = 0u64;
+    for (path, bytes) in roots {
+        if counted.iter().any(|root| path.starts_with(root)) {
+            continue;
+        }
+        counted.push(path);
+        total = total.saturating_add(bytes);
+    }
+    Ok(StorageUsageResponse { total_bytes: total, items })
 }
 
 #[command]
@@ -111,13 +337,141 @@ pub fn get_storage_settings() -> Result<StorageSettingsResponse, String> {
 #[command]
 pub fn save_storage_settings(update: StorageSettingsUpdateRequest) -> Result<StorageSettingsResponse, String> {
     let update = local_cache::StorageSettingsUpdate {
+        settings_file: update.settings_file,
         library_dir: update.library_dir,
         exchange_cache_dir: update.exchange_cache_dir,
         downloads_dir: update.downloads_dir,
+        auto_import_dirs: update.auto_import_dirs,
+        auto_import_recursive: update.auto_import_recursive,
         initialized: update.initialized,
         admin_token: update.admin_token,
     };
     Ok(local_cache::save_storage_settings(update)?.into())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoImportCandidate {
+    pub local_path: String,
+    pub original_filename: String,
+    pub title: String,
+    pub description: String,
+    pub package_hash_blake3: String,
+    pub file_count: usize,
+    pub total_file_bytes: u64,
+    pub component_kinds: Vec<String>,
+    pub file_manifest: Vec<FileManifestEntry>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoImportFolderResult {
+    pub folder: String,
+    pub scanned_file_count: usize,
+    pub imported_count: usize,
+    pub entries: Vec<AutoImportCandidate>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileManifestEntry {
+    pub index: usize,
+    pub game_paths: Vec<String>,
+    pub length: u32,
+    pub payload_blake3: String,
+}
+
+fn collect_mcdf_paths(folder: &Path, recursive: bool, output: &mut Vec<PathBuf>, notes: &mut Vec<String>) -> Result<(), String> {
+    if !folder.exists() {
+        notes.push(format!("Auto-import folder does not exist: {}", folder.to_string_lossy()));
+        return Ok(());
+    }
+    if !folder.is_dir() {
+        notes.push(format!("Auto-import path is not a folder: {}", folder.to_string_lossy()));
+        return Ok(());
+    }
+    for entry in fs::read_dir(folder).map_err(|error| error.to_string())? {
+        let entry = match entry {
+            Ok(value) => value,
+            Err(error) => {
+                notes.push(format!("Could not read a folder entry: {error}"));
+                continue;
+            }
+        };
+        let path = entry.path();
+        if path.is_dir() && recursive {
+            collect_mcdf_paths(&path, recursive, output, notes)?;
+        } else if path.is_file() && path.extension().and_then(|value| value.to_str()).map(|value| value.eq_ignore_ascii_case("mcdf")).unwrap_or(false) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn file_manifest_entries(files: &[ExtractedFileInfo]) -> Vec<FileManifestEntry> {
+    files.iter().map(|file| FileManifestEntry {
+        index: file.index,
+        game_paths: file.game_paths.clone(),
+        length: file.length,
+        payload_blake3: file.blake3.clone(),
+    }).collect()
+}
+
+#[command]
+pub fn scan_auto_import_folder(folder: String, recursive: Option<bool>) -> Result<AutoImportFolderResult, String> {
+    let root = PathBuf::from(folder.trim());
+    let recursive = recursive.unwrap_or(false);
+    let mut notes = Vec::new();
+    let mut paths = Vec::new();
+    collect_mcdf_paths(&root, recursive, &mut paths, &mut notes)?;
+    paths.sort();
+    let scanned_file_count = paths.len();
+    let mut entries = Vec::new();
+    for path in paths {
+        let bytes = match fs::read(&path) {
+            Ok(value) => value,
+            Err(error) => {
+                notes.push(format!("Skipped {}: {error}", path.to_string_lossy()));
+                continue;
+            }
+        };
+        let package_hash = blake3::hash(&bytes).to_hex().to_string();
+        let parsed = match MCDFParser::parse_package_from_slice(&bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                notes.push(format!("Skipped {}: {error}", path.to_string_lossy()));
+                continue;
+            }
+        };
+        let mut kinds: Vec<String> = parsed.files
+            .iter()
+            .flat_map(|file| file.game_paths.iter().take(1))
+            .map(|path| infer_component_kind_from_path(path))
+            .collect();
+        kinds.sort();
+        kinds.dedup();
+        kinds.truncate(8);
+        let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("imported.mcdf").to_string();
+        entries.push(AutoImportCandidate {
+            local_path: path.to_string_lossy().to_string(),
+            original_filename: file_name.clone(),
+            title: file_name.trim_end_matches(".mcdf").to_string(),
+            description: parsed.metadata.description.clone(),
+            package_hash_blake3: package_hash,
+            file_count: parsed.files.len(),
+            total_file_bytes: parsed.files.iter().map(|file| file.length as u64).sum(),
+            component_kinds: kinds,
+            file_manifest: file_manifest_entries(&parsed.files),
+            notes: vec!["Imported from a configured auto-import folder.".to_string()],
+        });
+    }
+    let imported_count = entries.len();
+    Ok(AutoImportFolderResult {
+        folder: root.to_string_lossy().to_string(),
+        scanned_file_count,
+        imported_count,
+        entries,
+        notes,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -781,13 +1135,11 @@ pub struct RegisterExtractedPackageRequest {
 fn normalize_archive_server_url(input: &str) -> Result<String, String> {
     let mut trimmed = input.trim().trim_end_matches('/').to_string();
     if trimmed.is_empty() {
-        return Err("archive host is required".to_string());
+        return Ok("http://mcdf.thebigtree.life:48443".to_string());
     }
 
-    // Compatibility: old settings may still contain a full URL or a bare port.
-    // The product UI is host-only; internally the archive service always resolves to port 48443.
     if trimmed.chars().all(|ch| ch.is_ascii_digit()) || trimmed.starts_with(':') {
-        return Ok("http://127.0.0.1:48443".to_string());
+        return Err("MCDF Manager uses http://mcdf.thebigtree.life:48443. A bare port is not a valid registry address.".to_string());
     }
 
     let scheme = if trimmed.starts_with("http://") {
@@ -812,10 +1164,37 @@ fn normalize_archive_server_url(input: &str) -> Result<String, String> {
     }
 
     let local_host = matches!(host, "localhost" | "127.0.0.1" | "::1");
-    let resolved_scheme = if scheme == "http" || (scheme.is_empty() && local_host) { "http" } else { "https" };
+    if local_host {
+        return Err("MCDF Manager is pinned to http://mcdf.thebigtree.life:48443. Localhost registry URLs are not used by this build.".to_string());
+    }
+    let resolved_scheme = if scheme == "https" { "https" } else { "http" };
     Ok(format!("{resolved_scheme}://{host}:48443"))
 }
 
+
+
+fn registry_url_from_returned_value(base: &str, returned_url: Option<&str>, fallback_path: &str) -> Result<String, String> {
+    let base = base.trim_end_matches('/');
+    let raw = returned_url.map(str::trim).filter(|value| !value.is_empty());
+    let Some(raw) = raw else {
+        return Ok(format!("{base}{fallback_path}"));
+    };
+
+    if raw.starts_with('/') {
+        return Ok(format!("{base}{raw}"));
+    }
+
+    if let Ok(parsed) = reqwest::Url::parse(raw) {
+        let host = parsed.host_str().unwrap_or_default();
+        let returned_localhost = matches!(host, "localhost" | "127.0.0.1" | "::1");
+        if returned_localhost {
+            let query = parsed.query().map(|value| format!("?{value}")).unwrap_or_default();
+            return Ok(format!("{base}{}{}", parsed.path(), query));
+        }
+    }
+
+    Ok(raw.to_string())
+}
 
 fn archive_http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
@@ -1528,6 +1907,114 @@ pub fn add_moderation_block(server_url: String, bearer_token: Option<String>, ta
     response.json::<serde_json::Value>().map_err(|error| error.to_string())
 }
 
+
+#[command]
+pub fn edit_exchange_entry(
+    server_url: String,
+    bearer_token: Option<String>,
+    package_hash_blake3: String,
+    title: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
+    is_adult: Option<bool>,
+    visibility: Option<String>,
+    preview_image_path: Option<String>,
+    publisher_id: Option<String>,
+    publisher_display_name: Option<String>,
+    publisher_public_key: Option<String>,
+    publisher_certificate: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = normalize_archive_server_url(&server_url)?;
+    let client = archive_http_client()?;
+    let preview_image = preview_image_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| {
+            let path_buf = PathBuf::from(path);
+            let bytes = std::fs::read(&path_buf)
+                .map_err(|error| format!("Preview image could not be read from {path}: {error}"))?;
+            if bytes.len() > 5 * 1024 * 1024 {
+                return Err("Preview image is too large; keep MCDF Manager previews below 5 MiB.".to_string());
+            }
+            let filename = path_buf
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("preview.png")
+                .to_string();
+            let extension = filename.rsplit('.').next().unwrap_or("png").to_ascii_lowercase();
+            let media_type = match extension.as_str() {
+                "jpg" | "jpeg" => "image/jpeg",
+                "webp" => "image/webp",
+                "gif" => "image/gif",
+                _ => "image/png",
+            }
+            .to_string();
+            Ok(PackagePreviewImage { filename, media_type, bytes_hex: bytes_to_hex(&bytes) })
+        })
+        .transpose()?;
+    let payload = serde_json::json!({
+        "title": title,
+        "description": description,
+        "tags": tags,
+        "is_adult": is_adult,
+        "visibility": visibility,
+        "preview_image": preview_image,
+        "reason": "Edited from MCDF Manager",
+    });
+    let mut request = client.post(format!("{base}/v1/packages/{}/metadata", package_hash_blake3)).json(&payload);
+    if let Some(token) = bearer_token.as_deref().filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token.trim());
+    }
+    request = add_publisher_identity_headers(
+        request,
+        publisher_id.as_deref(),
+        publisher_display_name.as_deref(),
+        publisher_public_key.as_deref(),
+        publisher_certificate.as_deref(),
+    );
+    let response = request.send().map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
+        return Err(format!("owner edit failed: HTTP {status}: {body}"));
+    }
+    response.json::<serde_json::Value>().map_err(|error| error.to_string())
+}
+
+#[command]
+pub fn delete_exchange_entry(
+    server_url: String,
+    bearer_token: Option<String>,
+    package_hash_blake3: String,
+    reason: Option<String>,
+    publisher_id: Option<String>,
+    publisher_display_name: Option<String>,
+    publisher_public_key: Option<String>,
+    publisher_certificate: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = normalize_archive_server_url(&server_url)?;
+    let client = archive_http_client()?;
+    let payload = serde_json::json!({ "reason": reason });
+    let mut request = client.post(format!("{base}/v1/packages/{}/remove", package_hash_blake3)).json(&payload);
+    if let Some(token) = bearer_token.as_deref().filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token.trim());
+    }
+    request = add_publisher_identity_headers(
+        request,
+        publisher_id.as_deref(),
+        publisher_display_name.as_deref(),
+        publisher_public_key.as_deref(),
+        publisher_certificate.as_deref(),
+    );
+    let response = request.send().map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
+        return Err(format!("owner delete failed: HTTP {status}: {body}"));
+    }
+    response.json::<serde_json::Value>().map_err(|error| error.to_string())
+}
+
 #[command]
 pub fn admin_remove_exchange_entry(server_url: String, bearer_token: Option<String>, package_hash_blake3: String, reason: Option<String>) -> Result<serde_json::Value, String> {
     let base = normalize_archive_server_url(&server_url)?;
@@ -1542,6 +2029,35 @@ pub fn admin_remove_exchange_entry(server_url: String, bearer_token: Option<Stri
         let status = response.status();
         let body = response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
         return Err(format!("admin remove failed: HTTP {status}: {body}"));
+    }
+    response.json::<serde_json::Value>().map_err(|error| error.to_string())
+}
+
+#[command]
+pub fn transfer_exchange_entry_owner(
+    server_url: String,
+    bearer_token: Option<String>,
+    package_hash_blake3: String,
+    new_owner_public_id: String,
+    new_owner_display_name: Option<String>,
+    reason: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = normalize_archive_server_url(&server_url)?;
+    let client = archive_http_client()?;
+    let payload = serde_json::json!({
+        "new_owner_public_id": new_owner_public_id,
+        "new_owner_display_name": new_owner_display_name,
+        "reason": reason,
+    });
+    let mut request = client.post(format!("{base}/v1/admin/packages/{}/owner", package_hash_blake3)).json(&payload);
+    if let Some(token) = bearer_token.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
+        return Err(format!("owner transfer failed: HTTP {status}: {body}"));
     }
     response.json::<serde_json::Value>().map_err(|error| error.to_string())
 }
@@ -1570,11 +2086,13 @@ pub fn request_locked_mcdf_access(server_url: String, bearer_token: Option<Strin
 
 fn wait_for_archive_job(
     client: &reqwest::blocking::Client,
+    base: &str,
     status_url: &str,
     bearer_token: Option<&str>,
 ) -> Result<CentralUploadResponse, String> {
+    let normalized_status_url = registry_url_from_returned_value(base, Some(status_url), status_url)?;
     for _ in 0..720 {
-        let mut request = client.get(status_url);
+        let mut request = client.get(&normalized_status_url);
         if let Some(token) = bearer_token.filter(|value| !value.trim().is_empty()) {
             request = request.bearer_auth(token);
         }
@@ -1613,6 +2131,7 @@ pub fn upload_mcdf_to_central_server(
     preview_image_path: Option<String>,
     is_adult: Option<bool>,
     visibility: Option<String>,
+    preview_image_path: Option<String>,
     publisher_id: Option<String>,
     publisher_display_name: Option<String>,
     publisher_public_key: Option<String>,
@@ -1682,9 +2201,9 @@ fn build_marketplace_metadata(
     let preview_image = match preview_image_path.filter(|path| !path.trim().is_empty()) {
         Some(path) => {
             let path_buf = PathBuf::from(&path);
-            let bytes = std::fs::read(&path_buf).map_err(|error| format!("failed to read preview image: {error}"))?;
+            let bytes = std::fs::read(&path_buf).map_err(|error| format!("Preview image could not be read from {path}: {error}"))?;
             if bytes.len() > 5 * 1024 * 1024 {
-                return Err("preview image is too large; keep marketplace previews below 5 MiB".to_string());
+                return Err("Preview image is too large; keep MCDF Manager previews below 5 MiB.".to_string());
             }
             let filename = path_buf.file_name().and_then(|value| value.to_str()).unwrap_or("preview.png").to_string();
             let extension = filename.rsplit('.').next().unwrap_or("png").to_ascii_lowercase();
@@ -1708,6 +2227,35 @@ fn build_marketplace_metadata(
     })
 }
 
+fn describe_http_send_error(context: &str, error: reqwest::Error) -> String {
+    let mut details = vec![format!("{context} could not be completed.")];
+
+    if error.is_builder() {
+        details.push("The HTTP request could not be built before it was sent. This usually means one of the generated headers, URLs, or preview/metadata fields is invalid or too large.".to_string());
+    } else if error.is_timeout() {
+        details.push("The request timed out while contacting the registry server.".to_string());
+    } else if error.is_connect() {
+        details.push("MCDF Manager could not connect to the registry server.".to_string());
+    } else if error.is_body() {
+        details.push("The request body could not be streamed to the registry server.".to_string());
+    } else if error.is_decode() {
+        details.push("The registry server response could not be decoded.".to_string());
+    } else if error.is_request() {
+        details.push("The request was rejected by the local HTTP client before a usable server response was available.".to_string());
+    }
+
+    details.push(format!("Technical error: {error}"));
+    details.join("\n")
+}
+
+fn header_value_is_safe(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte == b'\t' || (0x20..=0x7e).contains(&byte))
+        && !value.contains('\n')
+        && !value.contains('\r')
+}
+
 fn add_publisher_identity_headers(
     mut request: reqwest::blocking::RequestBuilder,
     publisher_id: Option<&str>,
@@ -1725,7 +2273,17 @@ fn add_publisher_identity_headers(
         request = request.header("x-mcdf-publisher-public-key", value);
     }
     if let Some(value) = publisher_certificate.map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.header("x-mcdf-publisher-certificate", value);
+        // PEM certificates contain newlines. Raw newlines are illegal in HTTP
+        // header values and make reqwest fail locally with a vague
+        // `builder error` before the request reaches the registry. Keep a
+        // legacy plain header for already one-line values, and send multiline
+        // certificates through a header-safe hex variant that newer registry
+        // servers understand.
+        if value.contains('\n') || value.contains('\r') {
+            request = request.header("x-mcdf-publisher-certificate-hex", bytes_to_hex(value.as_bytes()));
+        } else {
+            request = request.header("x-mcdf-publisher-certificate", value);
+        }
     }
     request
 }
@@ -1761,7 +2319,9 @@ fn upload_extracted_parts_to_central_server(
     if let Some(token) = bearer_token.filter(|value| !value.trim().is_empty()) {
         probe_request = probe_request.bearer_auth(token);
     }
-    let probe_response = probe_request.send().map_err(|error| error.to_string())?;
+    let probe_response = probe_request
+        .send()
+        .map_err(|error| describe_http_send_error("Registry file probe", error))?;
     if !probe_response.status().is_success() {
         let status = probe_response.status();
         let body = probe_response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
@@ -1773,10 +2333,17 @@ fn upload_extracted_parts_to_central_server(
         let payload_slice = package
             .file_payload_slice_by_blake3(&missing.payload_blake3)
             .map_err(|error| format!("server requested unknown missing file {}: {error}", missing.payload_blake3))?;
-        let upload_url = missing.upload_url.clone().unwrap_or_else(|| format!("{base}/v1/files/{}/upload", missing.payload_blake3));
+        let upload_path = format!("/v1/files/{}/upload", missing.payload_blake3);
+        // Use the configured registry origin for file uploads. Older registry
+        // builds returned absolute upload URLs based on their bind address,
+        // which leaked http://127.0.0.1:48443 to remote clients. Missing-file
+        // uploads are always handled by this registry API path, so the client
+        // builds the URL from the configured server instead of trusting the
+        // returned absolute value.
+        let upload_url = format!("{}{}", base.trim_end_matches('/'), upload_path);
         let mut upload_request = add_publisher_identity_headers(
             client
-                .post(upload_url)
+                .post(&upload_url)
                 .header("content-type", "application/octet-stream")
                 .body(payload_slice.to_vec()),
             publisher_id,
@@ -1787,7 +2354,9 @@ fn upload_extracted_parts_to_central_server(
         if let Some(token) = bearer_token.filter(|value| !value.trim().is_empty()) {
             upload_request = upload_request.bearer_auth(token);
         }
-        let upload_response = upload_request.send().map_err(|error| error.to_string())?;
+        let upload_response = upload_request
+            .send()
+            .map_err(|error| describe_http_send_error("Registry missing-file upload", error))?;
         if !upload_response.status().is_success() {
             let status = upload_response.status();
             let body = upload_response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
@@ -1830,14 +2399,16 @@ fn upload_extracted_parts_to_central_server(
     if let Some(token) = bearer_token.filter(|value| !value.trim().is_empty()) {
         register_request = register_request.bearer_auth(token);
     }
-    let response = register_request.send().map_err(|error| error.to_string())?;
+    let response = register_request
+        .send()
+        .map_err(|error| describe_http_send_error("Registry package registration", error))?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
         return Err(format!("central server extracted package registration failed: HTTP {status}: {body}"));
     }
     let job = response.json::<JobCreateResponse>().map_err(|error| error.to_string())?;
-    let mut result = wait_for_archive_job(&client, &job.status_url, bearer_token)?;
+    let mut result = wait_for_archive_job(&client, &base, &job.status_url, bearer_token)?;
     result.notes.insert(0, format!(
         "Client mapped {} internal files in memory, skipped {} known files, uploaded only {} missing file slices, then waited for server-side publishing job {}.",
         package.files.len(),
@@ -1861,13 +2432,37 @@ fn upload_full_mcdf_to_central_server(
 ) -> Result<CentralUploadResponse, String> {
     let client = archive_http_client()?;
     let base = normalize_archive_server_url(server_url)?;
+
+    // The compatibility upload path sends metadata through an HTTP header because the
+    // request body is the raw MCDF package. Preview images are represented as hex bytes
+    // inside the metadata object, which can make that header too large for reqwest/HTTP
+    // and surface as an unhelpful "builder error". Keep the opaque-package fallback
+    // publishable by omitting preview bytes from the header. Parsed MCDF uploads still
+    // send preview metadata in the JSON register request.
+    let mut header_marketplace = marketplace.clone();
+    let omitted_preview_from_header = header_marketplace.preview_image.is_some();
+    header_marketplace.preview_image = None;
+    let metadata_header = serde_json::to_string(&header_marketplace)
+        .map_err(|error| format!("Preview/marketplace metadata could not be prepared: {error}"))?;
+
+    let mut builder = client
+        .post(format!("{base}/v1/packages/upload-async"))
+        .header("content-type", "application/octet-stream")
+        .header("x-mcdf-filename", filename);
+
+    if header_value_is_safe(&metadata_header) && metadata_header.len() <= 6 * 1024 {
+        builder = builder
+            .header("x-mcdf-marketplace-metadata", metadata_header.clone())
+            .header("x-mcdf-manager-metadata", metadata_header);
+    } else {
+        let metadata_hex = bytes_to_hex(metadata_header.as_bytes());
+        builder = builder
+            .header("x-mcdf-marketplace-metadata-hex", metadata_hex.clone())
+            .header("x-mcdf-manager-metadata-hex", metadata_hex);
+    }
+
     let mut request = add_publisher_identity_headers(
-        client
-            .post(format!("{base}/v1/packages/upload-async"))
-            .header("content-type", "application/octet-stream")
-            .header("x-mcdf-filename", filename)
-            .header("x-mcdf-marketplace-metadata", serde_json::to_string(&marketplace).unwrap_or_else(|_| "{}".to_string()))
-            .body(bytes),
+        builder.body(bytes),
         publisher_id,
         publisher_display_name,
         publisher_public_key,
@@ -1878,14 +2473,20 @@ fn upload_full_mcdf_to_central_server(
         request = request.bearer_auth(token);
     }
 
-    let response = request.send().map_err(|error| error.to_string())?;
+    let response = request
+        .send()
+        .map_err(|error| describe_http_send_error("Compatibility MCDF upload request", error))?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().unwrap_or_else(|_| "<unreadable response body>".to_string());
         return Err(format!("central server upload failed: HTTP {status}: {body}"));
     }
     let job = response.json::<JobCreateResponse>().map_err(|error| error.to_string())?;
-    wait_for_archive_job(&client, &job.status_url, bearer_token)
+    let mut result = wait_for_archive_job(&client, &base, &job.status_url, bearer_token)?;
+    if omitted_preview_from_header {
+        result.notes.insert(0, "Compatibility upload omitted the preview image from the metadata header to avoid oversized HTTP headers. Publish through the parsed MCDF path to include the preview image.".to_string());
+    }
+    Ok(result)
 }
 
 fn file_display_metadata(paths: &[String], size_bytes: u64) -> FileDisplayMetadata {
@@ -2018,7 +2619,7 @@ fn download_remote_mcdf_bytes(source_url: &str) -> Result<(Vec<u8>, Vec<String>)
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::limited(10))
-        .user_agent("MCDF-Browser/0.1 remote-metadata-scan")
+        .user_agent("MCDF-Manager/0.1 remote-metadata-scan")
         .build()
         .map_err(|error| error.to_string())?;
     let mut notes = Vec::new();

@@ -7,6 +7,9 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
   type MouseEvent,
+  type FormEvent,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -116,6 +119,11 @@ type CentralServerHealth = {
   hosted_auth_mode?: string | null;
   ca_id?: string | null;
   client_certificates_supported?: boolean | null;
+  git_available?: boolean | null;
+  ssh_available?: boolean | null;
+  public_index_sync_ready?: boolean | null;
+  private_state_sync_ready?: boolean | null;
+  server_version?: string | null;
 };
 
 type ArchiveConfigResponse = {
@@ -207,12 +215,15 @@ type PublicIndexDiagnosticsResponse = {
 
 type PublicIndexPackageSummary = {
   package_hash_blake3: string;
+  share_id?: string;
+  share_code?: string;
   original_filename: string;
   title?: string;
   description: string;
   tags?: string[];
   preview_image_available?: boolean;
   preview_image_path?: string | null;
+  preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: string | null;
   owner_display_name: string;
@@ -293,6 +304,8 @@ type PublicPackageRecord = {
   schema_version: number;
   generated_at: string;
   package_hash_blake3: string;
+  share_id?: string;
+  share_code?: string;
   original_filename: string;
   title?: string;
   description: string;
@@ -338,6 +351,14 @@ type ExportLocalMcdfResult = {
   bytes_written: number;
 };
 
+type ExportInternalMcdfFileResult = {
+  source_path: string;
+  output_path: string;
+  index: number;
+  payload_blake3: string;
+  bytes_written: number;
+};
+
 type CacheClearResult = {
   cache_dir: string;
   removed_dirs: string[];
@@ -352,16 +373,56 @@ type StorageSettingsResponse = {
   library_dir: string;
   exchange_cache_dir: string;
   downloads_dir: string;
+  auto_import_dirs: string[];
+  auto_import_recursive: boolean;
   admin_token?: string | null;
   notes: string[];
 };
 
 type StorageSettingsUpdateRequest = {
+  settings_file?: string | null;
   library_dir?: string | null;
   exchange_cache_dir?: string | null;
   downloads_dir?: string | null;
+  auto_import_dirs?: string[] | null;
+  auto_import_recursive?: boolean | null;
   initialized?: boolean | null;
   admin_token?: string | null;
+};
+
+type StorageUsageItem = {
+  label: string;
+  path: string;
+  bytes: number;
+  files: number;
+  directories: number;
+  error?: string | null;
+};
+
+type StorageUsageResponse = {
+  total_bytes: number;
+  items: StorageUsageItem[];
+};
+
+type AutoImportCandidate = {
+  local_path: string;
+  original_filename: string;
+  title: string;
+  description: string;
+  package_hash_blake3: string;
+  file_count: number;
+  total_file_bytes: number;
+  component_kinds: string[];
+  file_manifest: LocalFileManifestEntry[];
+  notes: string[];
+};
+
+type AutoImportFolderResult = {
+  folder: string;
+  scanned_file_count: number;
+  imported_count: number;
+  entries: AutoImportCandidate[];
+  notes: string[];
 };
 
 type ExchangePackageCacheInspection = {
@@ -438,6 +499,32 @@ type ReportListResponse = {
   generated_at: string;
   report_count: number;
   reports: ReportRecord[];
+  notes: string[];
+};
+
+type ExchangeEditDraft = {
+  title: string;
+  description: string;
+  tags: string;
+  visibility: string;
+  isAdult: boolean;
+  previewImagePath: string;
+  previewImageName: string;
+};
+
+type ExchangeOwnerMutationResponse = {
+  package_hash_blake3: string;
+  title: string;
+  description: string;
+  tags: string[];
+  is_adult: boolean;
+  visibility: string;
+  owner_public_id: string;
+  owner_display_name: string;
+  preview_image_path?: string | null;
+  removed: boolean;
+  index_rendered: boolean;
+  index_pushed: boolean;
   notes: string[];
 };
 type UserPermissionRecord = {
@@ -622,6 +709,7 @@ type LocalLibrarySettings = {
   exchangeViewMode: BrowserDisplayMode;
   adultContentMode: AdultContentMode;
   dateDisplayMode: DateDisplayMode;
+  libraryFolderTags: string[];
 };
 const LOCAL_LIBRARY_SETTINGS_KEY = "mcdf.localLibrary.settings.v1";
 function readLibrarySettings(): LocalLibrarySettings {
@@ -638,6 +726,9 @@ function readLibrarySettings(): LocalLibrarySettings {
       )
         ? parsed.dateDisplayMode
         : "dmy",
+      libraryFolderTags: Array.isArray(parsed.libraryFolderTags)
+        ? Array.from(new Set(parsed.libraryFolderTags.map(String).map((tag: string) => tag.trim().toLowerCase()).filter(Boolean))).slice(0, 32)
+        : [],
     };
   } catch {
     return {
@@ -645,6 +736,7 @@ function readLibrarySettings(): LocalLibrarySettings {
       exchangeViewMode: "cards",
       adultContentMode: "hide",
       dateDisplayMode: "dmy",
+      libraryFolderTags: [],
     };
   }
 }
@@ -681,12 +773,234 @@ function packageIsAdult(
   );
 }
 
+
+type ImportedPreviewImage = {
+  source_path: string;
+  cached_path: string;
+  bytes: number;
+  blake3: string;
+};
+
+async function cachePreviewImageForLibrary(path: string): Promise<string> {
+  const imported = await invoke<ImportedPreviewImage>("import_preview_image", {
+    sourcePath: path,
+  });
+  return imported.cached_path || path;
+}
+
 function displayImageSrc(image?: string | null): string | null {
   if (!image) return null;
   const trimmed = image.trim();
   if (!trimmed) return null;
   if (/^(https?:|data:|blob:|asset:|tauri:)/i.test(trimmed)) return trimmed;
   return convertFileSrc(trimmed);
+}
+
+const DEFAULT_PREVIEW_CROP: PreviewCrop = { x: 50, y: 50, scale: 1 };
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizePreviewCrop(crop?: Partial<PreviewCrop> | null): PreviewCrop {
+  return {
+    x: clampNumber(Number(crop?.x ?? DEFAULT_PREVIEW_CROP.x), 0, 100),
+    y: clampNumber(Number(crop?.y ?? DEFAULT_PREVIEW_CROP.y), 0, 100),
+    scale: clampNumber(Number(crop?.scale ?? DEFAULT_PREVIEW_CROP.scale), 1, 2.5),
+  };
+}
+
+function previewImageStyle(crop?: Partial<PreviewCrop> | null): CSSProperties {
+  const next = normalizePreviewCrop(crop);
+  return {
+    objectPosition: `${next.x}% ${next.y}%`,
+    transform: `scale(${next.scale})`,
+  };
+}
+
+function nudgePreviewCrop(
+  crop: PreviewCrop,
+  delta: Partial<Pick<PreviewCrop, "x" | "y" | "scale">>,
+): PreviewCrop {
+  const current = normalizePreviewCrop(crop);
+  return normalizePreviewCrop({
+    ...current,
+    x: current.x + (delta.x ?? 0),
+    y: current.y + (delta.y ?? 0),
+    scale: current.scale + (delta.scale ?? 0),
+  });
+}
+
+function PreviewFramingModal({
+  image,
+  title,
+  crop,
+  onApply,
+  onClose,
+  onChooseImage,
+}: {
+  image: string;
+  title: string;
+  crop: PreviewCrop;
+  onApply: (crop: PreviewCrop) => void;
+  onClose: () => void;
+  onChooseImage?: () => void;
+}) {
+  const [workingCrop, setWorkingCrop] = useState<PreviewCrop>(() =>
+    normalizePreviewCrop(crop),
+  );
+  const [isDraggingFrame, setIsDraggingFrame] = useState(false);
+  const dragStartRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    crop: PreviewCrop;
+  } | null>(null);
+
+  useEffect(() => {
+    setWorkingCrop(normalizePreviewCrop(crop));
+    dragStartRef.current = null;
+    setIsDraggingFrame(false);
+  }, [crop.x, crop.y, crop.scale, image]);
+
+  const startPreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStartRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      crop: normalizePreviewCrop(workingCrop),
+    };
+    setIsDraggingFrame(true);
+  };
+
+  const movePreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragStartRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const deltaX = event.clientX - drag.clientX;
+    const deltaY = event.clientY - drag.clientY;
+    const dragScale = 0.55 / Math.max(1, drag.crop.scale);
+    setWorkingCrop(
+      normalizePreviewCrop({
+        ...drag.crop,
+        x: drag.crop.x - deltaX * dragScale,
+        y: drag.crop.y - deltaY * dragScale,
+      }),
+    );
+  };
+
+  const finishPreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragStartRef.current;
+    if (drag?.pointerId === event.pointerId) {
+      dragStartRef.current = null;
+      setIsDraggingFrame(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+  };
+
+  return (
+    <div
+      className="preview-framing-backdrop"
+      role="presentation"
+      onMouseDown={onClose}
+    >
+      <div
+        className="preview-framing-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Frame preview image"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="panel-title-row refined-modal-head">
+          <div>
+            <div className="eyebrow">Preview image</div>
+            <h2>Frame picture</h2>
+          </div>
+          <button
+            type="button"
+            className="modal-icon-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div className="preview-framing-body">
+          <div
+            className={`preview-framing-stage${isDraggingFrame ? " is-dragging" : ""}`}
+            onPointerDown={startPreviewDrag}
+            onPointerMove={movePreviewDrag}
+            onPointerUp={finishPreviewDrag}
+            onPointerCancel={finishPreviewDrag}
+            onWheel={(event) => {
+              event.preventDefault();
+              const zoomStep = event.deltaY < 0 ? 0.08 : -0.08;
+              setWorkingCrop((current) => nudgePreviewCrop(current, { scale: zoomStep }));
+            }}
+          >
+            <img
+              src={displayImageSrc(image) || undefined}
+              alt={title}
+              draggable={false}
+              style={previewImageStyle(workingCrop)}
+            />
+            <div className="preview-frame-wheel-indicator" aria-hidden="true">
+              ✥
+            </div>
+            <div className="preview-frame-nudge-pad" aria-label="Move preview image">
+              <button
+                type="button"
+                className="preview-frame-nudge preview-frame-nudge-up"
+                onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { y: -4 }))}
+                aria-label="Move picture up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="preview-frame-nudge preview-frame-nudge-left"
+                onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { x: -4 }))}
+                aria-label="Move picture left"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                className="preview-frame-nudge preview-frame-nudge-right"
+                onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { x: 4 }))}
+                aria-label="Move picture right"
+              >
+                →
+              </button>
+              <button
+                type="button"
+                className="preview-frame-nudge preview-frame-nudge-down"
+                onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { y: 4 }))}
+                aria-label="Move picture down"
+              >
+                ↓
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="hero-actions preview-framing-actions">
+          {onChooseImage && (
+            <GhostButton onClick={onChooseImage}>Choose different picture</GhostButton>
+          )}
+          <GhostButton onClick={onClose}>Cancel</GhostButton>
+          <PrimaryButton onClick={() => onApply(normalizePreviewCrop(workingCrop))}>
+            Apply picture frame
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 type RemoteMcdfScanResult = {
@@ -714,6 +1028,7 @@ type LocalMcdfStorageState =
   | "removed"
   | "failed";
 type McdfVisibility = "public" | "locked" | "private";
+type PreviewCrop = { x: number; y: number; scale: number };
 type BrowserDisplayMode = "list" | "cards";
 type AdultContentMode = "hide" | "show";
 type DateDisplayMode = "dmy" | "ymd" | "mdy" | "iso";
@@ -730,6 +1045,7 @@ type LocalMcdfEntry = {
   description: string;
   tags: string[];
   preview_image_path?: string | null;
+  preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: McdfVisibility;
   package_hash_blake3?: string | null;
@@ -755,6 +1071,7 @@ type McdfAddDraft = {
   description: string;
   tags: string;
   previewPath: string | null;
+  previewCrop: PreviewCrop;
   isAdult: boolean;
   visibility: McdfVisibility;
   sourceType?: LocalMcdfSourceType;
@@ -785,7 +1102,7 @@ const navSections: Array<{
     items: [
       {
         id: "library",
-        label: "LIBRARY",
+        label: "Library",
         icon: "⌁",
         hint: "Local and subscribed entries",
       },
@@ -799,7 +1116,7 @@ const navSections: Array<{
   },
   {
     title: "Advanced",
-    items: [{ id: "prepare", label: "Analyze MCDF", icon: "◇", hint: "" }],
+    items: [{ id: "prepare", label: "Analyze", icon: "◇", hint: "" }],
   },
   {
     title: "System",
@@ -820,13 +1137,23 @@ const navSections: Array<{
   },
 ];
 
-const DEFAULT_ARCHIVE_HOST =
-  import.meta.env.VITE_DEFAULT_ARCHIVE_HOST || "http://mcdf.thebigtree.life";
-const SHARED_ARCHIVE_HOST =
-  localStorage.getItem("mcdf.archive.host") || DEFAULT_ARCHIVE_HOST;
+const MCDF_REGISTRY_URL = "http://mcdf.thebigtree.life:48443";
+const PUBLIC_INDEX_LATEST_URL =
+  "https://raw.githubusercontent.com/obscure-crescent/moon-sparkles/main/public/indexes/latest.json";
+const DEFAULT_ARCHIVE_HOST = MCDF_REGISTRY_URL;
+const SHARED_ARCHIVE_HOST = MCDF_REGISTRY_URL;
+
+type ConnectivityState = "checking" | "online" | "offline" | "degraded";
+
+type ConnectivityStatus = {
+  state: ConnectivityState;
+  label: string;
+  detail: string;
+  checkedAt?: string;
+};
 
 function configuredArchiveHost(): string {
-  return localStorage.getItem("mcdf.archive.host") || SHARED_ARCHIVE_HOST;
+  return MCDF_REGISTRY_URL;
 }
 
 function displayNameToUsername(value: string): string {
@@ -884,6 +1211,13 @@ function storedPublisherDisplayName(): string {
     localStorage.getItem("mcdf.publisher.displayName") ||
     localStorage.getItem("mcdf.publisher.username") ||
     "Not Registered"
+  );
+}
+function storedPublisherPublicId(): string {
+  return displayNameToUsername(
+    localStorage.getItem("mcdf.publisher.username") ||
+      localStorage.getItem("mcdf.publisher.displayName") ||
+      "",
   );
 }
 function storedPublisherPermissions(
@@ -1101,6 +1435,15 @@ function readLocalMcdfLibrary(): LocalMcdfEntry[] {
 }
 function writeLocalMcdfLibrary(entries: LocalMcdfEntry[]) {
   localStorage.setItem(LOCAL_LIBRARY_STORAGE_KEY, JSON.stringify(entries));
+}
+function localEntryHasLocalFile(entry: LocalMcdfEntry | null | undefined): boolean {
+  return Boolean(
+    entry &&
+      (entry.source_type === "local_file" || !entry.source_type) &&
+      entry.local_path &&
+      entry.storage_state !== "subscribed" &&
+      entry.storage_state !== "removed",
+  );
 }
 function localEntryId(path: string): string {
   return `local-${btoa(unescape(encodeURIComponent(path)))
@@ -1350,7 +1693,7 @@ function friendlyPublishNotes(entry: LocalMcdfEntry): string[] {
   const notes = entry.notes.join(" ").toLowerCase();
   const result: string[] = [];
   if (entry.last_published_at)
-    result.push(`Last published ${formatDate(entry.last_published_at)}.`);
+    result.push(`Publish on: ${formatDate(entry.last_published_at)}.`);
   if (entry.storage_state === "online")
     result.push("Visible in The Eorzea Exchange public index.");
   if (entry.storage_state === "server")
@@ -1564,8 +1907,161 @@ function statusClass(status: string): string {
   return "status-neutral";
 }
 
+function friendlyErrorSummary(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes("invalid header") || normalized.includes("builder error")) {
+    return "Publish request could not be built.";
+  }
+  if (normalized.includes("preview image") && normalized.includes("could not be prepared")) {
+    return "Preview image could not be prepared.";
+  }
+  if (normalized.includes("failed to read preview image") || normalized.includes("preview image could not be read")) {
+    return "Preview image could not be read.";
+  }
+  if (normalized.includes("preview image is too large")) {
+    return "Preview image is too large.";
+  }
+  if (normalized.includes("preview image picker failed")) {
+    return "Preview image picker could not open.";
+  }
+  if (normalized.includes("image") && normalized.includes("upload")) {
+    return "Image upload failed.";
+  }
+  return error.split("\n")[0] || error;
+}
+
+function technicalReason(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes("invalid header") || normalized.includes("builder error")) {
+    return "The local HTTP client rejected the publish request before it was sent. The most common cause is an invalid or oversized HTTP header, especially a multiline publisher certificate or metadata that was put into a header.";
+  }
+  if (normalized.includes("preview image is too large")) {
+    return "The selected preview image is above the client preview limit.";
+  }
+  if (normalized.includes("preview image could not be read") || normalized.includes("failed to read preview image")) {
+    return "The selected preview path cannot be read by the app. The file may have moved, or the cached preview path may not exist.";
+  }
+  if (normalized.includes("central server") || normalized.includes("registry")) {
+    return "The request reached the registry flow and the registry returned an error or could not be contacted.";
+  }
+  return "The client reported an error but did not provide a more specific classification.";
+}
+
+function likelyFix(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes("invalid header") || normalized.includes("builder error")) {
+    return [
+      "1. Update the registry server to the build that accepts header-safe publisher certificates.",
+      "2. Try publishing again with the same preview image; the client now sends multiline certificates through a safe header.",
+      "3. If it still fails, remove the preview and publish once. If that works, re-add the preview after the package is registered.",
+      "4. Check the details below for the failing publish step and whether a preview path/certificate was present.",
+    ].join("\n");
+  }
+  if (normalized.includes("preview image")) {
+    return [
+      "1. Choose a smaller PNG, JPG, WEBP, or GIF preview.",
+      "2. Use Change picture so MCDF Manager copies the preview into its cache.",
+      "3. Confirm the preview renders in the library before publishing.",
+      "4. Try publishing without the preview to separate image preparation from MCDF upload.",
+    ].join("\n");
+  }
+  return "Copy this error log and the current publish step into the issue/report so the failing layer can be identified.";
+}
+
+function buildErrorLog(error: string, summary: string): string {
+  const sections: string[] = [];
+  sections.push(`Summary\n${summary}`);
+  sections.push(`Technical reason\n${technicalReason(error)}`);
+  sections.push(`What to try\n${likelyFix(error)}`);
+  sections.push(`Raw details\n${error}`);
+  return sections.join("\n\n");
+}
+
+function publishDebugContext(entry: LocalMcdfEntry, details: {
+  serverUrl: string;
+  previewPath: string | null;
+  hasBearerToken: boolean;
+  hasPublisherCertificate: boolean;
+  hasPublisherPublicKey: boolean;
+  visibility: string;
+}): string {
+  return [
+    "Publish context",
+    `Entry: ${entry.title || entry.original_filename}`,
+    `MCDF path: ${entry.local_path || "<not available>"}`,
+    `Server URL: ${details.serverUrl || "<not set>"}`,
+    `Visibility: ${details.visibility}`,
+    `Preview path: ${details.previewPath || "<none>"}`,
+    `Bearer token configured: ${details.hasBearerToken ? "yes" : "no"}`,
+    `Publisher public key configured: ${details.hasPublisherPublicKey ? "yes" : "no"}`,
+    `Publisher certificate configured: ${details.hasPublisherCertificate ? "yes" : "no"}`,
+  ].join("\n");
+}
+
+function ConnectivityBadge({ status }: { status: ConnectivityStatus }) {
+  if (status.state === "online") return null;
+  return (
+    <div
+      className={`connectivity-badge connectivity-${status.state}`}
+      title={status.detail}
+      aria-label={`Service status: ${status.label}. ${status.detail}`}
+    >
+      <span className="connectivity-dot" />
+      <span>{status.label}</span>
+    </div>
+  );
+}
+
 function ErrorBox({ error }: { error: string | null }) {
-  return error ? <div className="alert alert-error">{error}</div> : null;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  if (!error) return null;
+  const summary = friendlyErrorSummary(error);
+  const errorLog = buildErrorLog(error, summary);
+  return (
+    <>
+      <div className="alert alert-error error-summary-box">
+        <span>{summary}</span>
+        <button
+          type="button"
+          className="inline-details-link"
+          onClick={() => setDetailsOpen(true)}
+        >
+          details
+        </button>
+      </div>
+      {detailsOpen && (
+        <div
+          className="modal-backdrop error-detail-backdrop"
+          role="presentation"
+          onMouseDown={() => setDetailsOpen(false)}
+        >
+          <div
+            className="modal-card error-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Error details"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="panel-title-row refined-modal-head error-detail-head">
+              <div>
+                <div className="eyebrow">Error details</div>
+                <h2>{summary}</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-icon-close"
+                onClick={() => setDetailsOpen(false)}
+                aria-label="Close error details"
+              >
+                ×
+              </button>
+            </div>
+            <pre className="error-detail-text">{errorLog}</pre>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 function SuccessBox({ children }: { children: ReactNode }) {
   return <div className="alert alert-success">{children}</div>;
@@ -1615,6 +2111,187 @@ function IconButton({
 function Field(props: InputHTMLAttributes<HTMLInputElement>) {
   const { className = "", ...rest } = props;
   return <input {...rest} className={`field ${className}`} />;
+}
+
+function safeLayerFilename(file: LocalFileManifestEntry): string {
+  const firstPath = file.game_paths?.[0] || `layer-${file.index}`;
+  const name = basename(firstPath).replace(/[<>:"/\\|?*]+/g, "_").trim();
+  return name || `layer-${file.index}`;
+}
+
+function LayerInventoryModal({
+  entry,
+  onClose,
+  onError,
+  onMessage,
+}: {
+  entry: LocalMcdfEntry;
+  onClose: () => void;
+  onError: (message: string | null) => void;
+  onMessage: (message: string | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
+  const [exportingKey, setExportingKey] = useState<string | null>(null);
+  const [columnWidths, setColumnWidths] = useState({
+    download: 54,
+    type: 112,
+    name: 190,
+    path: 420,
+    size: 96,
+    hash: 116,
+  });
+  const files = entry.file_manifest || [];
+  const gridStyle = {
+    "--layer-download-width": `${columnWidths.download}px`,
+    "--layer-type-width": `${columnWidths.type}px`,
+    "--layer-name-width": `${columnWidths.name}px`,
+    "--layer-path-width": `${columnWidths.path}px`,
+    "--layer-size-width": `${columnWidths.size}px`,
+    "--layer-hash-width": `${columnWidths.hash}px`,
+  } as CSSProperties;
+  const startResize = (column: keyof typeof columnWidths, event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidths[column];
+    const minimums: Record<keyof typeof columnWidths, number> = {
+      download: 44,
+      type: 72,
+      name: 110,
+      path: 160,
+      size: 74,
+      hash: 86,
+    };
+    const maximums: Record<keyof typeof columnWidths, number> = {
+      download: 80,
+      type: 180,
+      name: 360,
+      path: 760,
+      size: 150,
+      hash: 220,
+    };
+    const onMove = (moveEvent: PointerEvent) => {
+      const next = Math.max(minimums[column], Math.min(maximums[column], startWidth + moveEvent.clientX - startX));
+      setColumnWidths((current) => ({ ...current, [column]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+  };
+  const kinds = useMemo(
+    () => Array.from(new Set(files.map((file) => inferComponentKind(file)).filter(Boolean))).sort(),
+    [files],
+  );
+  const filtered = files.filter((file) => {
+    const kind = inferComponentKind(file);
+    const text = `${kind} ${file.game_paths.join(" ")} ${file.payload_blake3}`.toLowerCase();
+    return (!kindFilter || kind === kindFilter) && (!query.trim() || text.includes(query.trim().toLowerCase()));
+  });
+  const exportFile = async (file: LocalFileManifestEntry) => {
+    if (!localEntryHasLocalFile(entry)) {
+      onError("This MCDF is not stored on this machine, so its internal layers cannot be exported yet.");
+      return;
+    }
+    const defaultName = safeLayerFilename(file);
+    const extension = defaultName.includes(".") ? defaultName.split(".").pop() || "bin" : "bin";
+    const selected = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "Layer file", extensions: [extension] }],
+    });
+    if (!selected || Array.isArray(selected)) return;
+    const key = `${file.index}-${file.payload_blake3}`;
+    setExportingKey(key);
+    onError(null);
+    try {
+      const result = await invoke<ExportInternalMcdfFileResult>("export_internal_mcdf_file", {
+        sourcePath: entry.local_path,
+        outputPath: selected,
+        fileIndex: file.index,
+        payloadBlake3: file.payload_blake3,
+      });
+      onMessage(`Layer exported to ${result.output_path}`);
+    } catch (error) {
+      onError(String(error));
+    } finally {
+      setExportingKey(null);
+    }
+  };
+  return (
+    <div className="modal-backdrop layer-modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="modal-card layer-inventory-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="MCDF layers and files"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="panel-title-row refined-modal-head">
+          <div>
+            <div className="eyebrow">MCDF layers</div>
+            <h2>{entry.title || entry.original_filename}</h2>
+          </div>
+          <IconButton label="Close layers" onClick={onClose}>×</IconButton>
+        </div>
+        <div className="layer-modal-summary">
+          <span className="status-pill status-neutral">{files.length} files</span>
+          <span className="status-pill status-neutral">{formatBytes(entry.total_file_bytes)}</span>
+          {entry.package_hash_blake3 && <code>{shortHash(entry.package_hash_blake3)}</code>}
+        </div>
+        <div className="layer-modal-toolbar">
+          <Field value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search path or hash…" />
+          <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
+            <option value="">All layer types</option>
+            {kinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+          </select>
+        </div>
+        {!localEntryHasLocalFile(entry) && (
+          <div className="alert warning">
+            This entry is not downloaded to this machine. Download the MCDF first to export individual layers.
+          </div>
+        )}
+        <div className="layer-file-table" role="table" aria-label="Internal MCDF files">
+          <div className="layer-file-row layer-file-head" role="row" style={gridStyle}>
+            <span className="layer-file-actions layer-file-head-cell">Download</span>
+            <span className="layer-file-head-cell">Type <button type="button" className="column-resizer" aria-label="Resize Type column" onPointerDown={(event) => startResize("type", event)} /></span>
+            <span className="layer-file-head-cell">Name <button type="button" className="column-resizer" aria-label="Resize Name column" onPointerDown={(event) => startResize("name", event)} /></span>
+            <span className="layer-file-head-cell">Path <button type="button" className="column-resizer" aria-label="Resize Path column" onPointerDown={(event) => startResize("path", event)} /></span>
+            <span className="layer-file-head-cell">Size <button type="button" className="column-resizer" aria-label="Resize Size column" onPointerDown={(event) => startResize("size", event)} /></span>
+            <span className="layer-file-head-cell">Hash <button type="button" className="column-resizer" aria-label="Resize Hash column" onPointerDown={(event) => startResize("hash", event)} /></span>
+          </div>
+          {filtered.length === 0 ? (
+            <div className="empty-small layer-empty">No layers match this filter.</div>
+          ) : filtered.map((file) => {
+            const key = `${file.index}-${file.payload_blake3}`;
+            const displayPath = file.game_paths.length ? file.game_paths.join(" · ") : `Layer ${file.index}`;
+            const displayName = safeLayerFilename(file);
+            return (
+              <div className="layer-file-row" role="row" key={key} style={gridStyle}>
+                <span className="layer-file-actions">
+                  <IconButton
+                    label={`Download ${displayName}`}
+                    disabled={!localEntryHasLocalFile(entry) || Boolean(exportingKey)}
+                    className="library-action-button layer-download-button"
+                    onClick={() => void exportFile(file)}
+                  >
+                    {exportingKey === key ? "…" : "⇩"}
+                  </IconButton>
+                </span>
+                <span className="layer-file-type" title={inferComponentKind(file)}>{inferComponentKind(file)}</span>
+                <span className="layer-file-name" title={displayName}>{displayName}</span>
+                <span className="layer-file-path" title={displayPath}>{displayPath}</span>
+                <span className="layer-file-size">{formatBytes(file.length)}</span>
+                <code title={file.payload_blake3}>{shortHash(file.payload_blake3)}</code>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ActivityIndicator({ operations }: { operations: Operation[] }) {
@@ -1905,7 +2582,7 @@ function PreparePanel({
       stage: {
         percent: 2,
         label: "Opening file",
-        detail: "Waiting for the selected bundle.",
+        detail: "Waiting for selected file.",
       },
       message: "Opening selected MCDF file",
     });
@@ -1918,14 +2595,14 @@ function PreparePanel({
       opId,
       8,
       "Opening file",
-      "Reading the selected MCDF bundle. Large packages can take a moment because the app opens the archive safely before it can list files.",
+      "Reading package bytes…",
     );
     try {
       setStage(
         opId,
         18,
         "Opening package header",
-        "This can be slow for large MCDF files. The current parser reads archive metadata and then walks internal entries to collect sizes and hashes; the faster path is a combined Rust scan that avoids opening the same package twice.",
+        "Parsing package header…",
       );
       const analyzed = await invoke<McdfAnalyzeResult>("analyze_mcdf", {
         path: selected,
@@ -1937,7 +2614,7 @@ function PreparePanel({
         opId,
         34,
         "Inspecting contents",
-        "Finding the internal files that need to be inspected.",
+        "Listing internal files…",
       );
       const totalBytes = fileInfos.reduce((sum, file) => sum + file.length, 0);
       setFiles(
@@ -1952,7 +2629,7 @@ function PreparePanel({
         opId,
         58,
         "Hashing parts",
-        `Calculated BLAKE3 payload hashes for ${fileInfos.length} internal files.`,
+        `Hashing ${fileInfos.length} internal files…`,
         { total: fileInfos.length },
       );
 
@@ -2030,7 +2707,7 @@ function PreparePanel({
       stage: {
         percent: 5,
         label: "Preparing hash manifest",
-        detail: "Using the hashes from the local MCDF analysis.",
+        detail: "Preparing local hash list…",
       },
       message: "Preparing hash manifest",
     });
@@ -2041,7 +2718,7 @@ function PreparePanel({
         opId,
         35,
         "Sending hash manifest",
-        "Sending BLAKE3 payload hashes to the archive server without uploading file bytes.",
+        "Checking registry status…",
         { known: 0, missing: 0, total: localFiles.length },
       );
       const probe = await probeKnownFiles(localFiles);
@@ -2102,6 +2779,7 @@ function PreparePanel({
       description: existing?.description || info.description || "",
       tags: existing?.tags || [],
       preview_image_path: existing?.preview_image_path || null,
+      preview_crop: existing?.preview_crop || null,
       is_adult: existing?.is_adult || false,
       visibility: existing?.visibility || "public",
       package_hash_blake3: existing?.package_hash_blake3 || null,
@@ -2333,6 +3011,11 @@ function AddMcdfEntryModal({
   const [progress, setProgress] = useState<AnalyzeProgress | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remotePreviewUrl, setRemotePreviewUrl] = useState("");
+  const [sharedImportText, setSharedImportText] = useState("");
+  const [sharedImportTag, setSharedImportTag] = useState("");
+  const [previewImporting, setPreviewImporting] = useState(false);
+  const [draftPreviewImageFailed, setDraftPreviewImageFailed] = useState(false);
+  const [draftFramingOpen, setDraftFramingOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -2343,7 +3026,16 @@ function AddMcdfEntryModal({
     setProgress(null);
     setRemoteUrl("");
     setRemotePreviewUrl("");
+    setSharedImportText("");
+    setSharedImportTag("");
+    setPreviewImporting(false);
+    setDraftPreviewImageFailed(false);
+    setDraftFramingOpen(false);
   }, [open]);
+
+  useEffect(() => {
+    setDraftPreviewImageFailed(false);
+  }, [draft?.previewPath]);
 
   if (!open) return null;
 
@@ -2429,6 +3121,7 @@ function AddMcdfEntryModal({
         description: info.description || "",
         tags: "",
         previewPath: null,
+        previewCrop: DEFAULT_PREVIEW_CROP,
         isAdult: false,
         visibility: "public",
       });
@@ -2515,6 +3208,7 @@ function AddMcdfEntryModal({
         description: scanned.description || "",
         tags: "",
         previewPath: remotePreviewUrl.trim() || null,
+        previewCrop: DEFAULT_PREVIEW_CROP,
         isAdult: false,
         visibility: "public",
         sourceType,
@@ -2562,24 +3256,182 @@ function AddMcdfEntryModal({
     }
   };
 
-  const chooseDraftPreview = async () => {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [
-        {
-          name: "Preview image",
-          extensions: ["png", "jpg", "jpeg", "webp", "gif"],
-        },
-      ],
+
+  const publicIndexBaseUrl = "https://raw.githubusercontent.com/obscure-crescent/moon-sparkles/main/public";
+  const latestIndexUrl = `${publicIndexBaseUrl}/indexes/latest.json`;
+  const publicAssetUrl = (path?: string | null): string | null => {
+    if (!path) return null;
+    if (/^https?:\/\//i.test(path)) return path;
+    return `${publicIndexBaseUrl}/${path.replace(/^\/+/, "")}`;
+  };
+  const shareIdFromInput = (input: string): string | null => {
+    const value = input.trim();
+    if (!value) return null;
+    const hostMatch = value.match(/(?:^|\s)mcdf\.thebigtree\.life:([a-z0-9-]{8,128})(?:\s|$)/i);
+    if (hostMatch) return hostMatch[1].toLowerCase();
+    const urlMatch = value.match(/(?:\/|=)([a-f0-9]{32,128})(?:\.json)?(?:[?#].*)?$/i);
+    if (urlMatch) return urlMatch[1].toLowerCase();
+    const hashOnly = value.match(/^[a-f0-9]{32,128}$/i);
+    return hashOnly ? value.toLowerCase() : null;
+  };
+  const entryFromPublicPackage = (pkg: PublicIndexPackageSummary | PublicPackageRecord, extraTag?: string): LocalMcdfEntry => {
+    const hash = pkg.package_hash_blake3;
+    const tags = Array.from(new Set([...(pkg.tags || []), ...(extraTag ? [extraTag] : [])]));
+    const componentKinds = "component_kinds" in pkg ? (pkg.component_kinds || []) : [];
+    return {
+      id: `shared-${hash.slice(0, 24)}`,
+      local_path: "",
+      source_type: "indexed",
+      source_url: publicAssetUrl((pkg as PublicIndexPackageSummary).download_manifest_path || (pkg as PublicIndexPackageSummary).package_manifest_path) || null,
+      source_label: "Shared MCDF",
+      remote_annotation: "Imported from an MCDF Manager share code. Download the MCDF when you want a local copy.",
+      missing_registry_percent: null,
+      original_filename: pkg.original_filename,
+      title: pkg.title || pkg.original_filename,
+      description: pkg.description || "",
+      tags,
+      preview_image_path: publicAssetUrl(pkg.preview_image_path),
+      preview_crop: null,
+      is_adult: Boolean(pkg.is_adult),
+      visibility: (pkg.visibility as McdfVisibility) || "public",
+      package_hash_blake3: hash,
+      file_count: pkg.file_count,
+      total_file_bytes: pkg.total_file_bytes,
+      component_kinds: componentKinds,
+      file_manifest: "files" in pkg ? (pkg.files || []).map((file) => ({
+        index: file.index ?? 0,
+        game_paths: file.game_paths || [],
+        length: file.length || 0,
+        payload_blake3: file.payload_blake3 || "",
+      })) : [],
+      sharing_policy: null,
+      storage_state: "subscribed",
+      last_checked_at: new Date().toISOString(),
+      last_published_at: null,
+      manifest_url: publicAssetUrl((pkg as PublicIndexPackageSummary).package_manifest_path) || null,
+      download_url: publicAssetUrl((pkg as PublicIndexPackageSummary).download_manifest_path) || null,
+      notes: ["Imported from an MCDF Manager share reference."],
+    };
+  };
+  const importSharedEntries = async () => {
+    const inputs = sharedImportText
+      .split(/[\n,]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!inputs.length) {
+      setError("Paste one or more MCDF Manager share codes first.");
+      return;
+    }
+    const opId = addOperation({
+      kind: "download",
+      label: "Import shared MCDF entries",
+      stage: { percent: 5, label: "Reading share codes", detail: "Resolving shared Exchange entries." },
+      message: "Importing shared MCDF entries",
     });
-    if (!selected || Array.isArray(selected) || !draft) return;
-    setDraft({ ...draft, previewPath: selected });
+    setLoading(true);
+    setError(null);
+    try {
+      const latest = await fetch(latestIndexUrl).then((response) => {
+        if (!response.ok) throw new Error(`Public index lookup failed: HTTP ${response.status}`);
+        return response.json() as Promise<PublicIndexLatest>;
+      });
+      const tag = sharedImportTag.trim().replace(/^#/, "");
+      const imported: LocalMcdfEntry[] = [];
+      const missing: string[] = [];
+      for (const raw of inputs) {
+        let pkg: PublicIndexPackageSummary | null = null;
+        if (/^https?:\/\//i.test(raw) && raw.toLowerCase().endsWith(".json")) {
+          try {
+            const record = await fetch(raw).then((response) => {
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              return response.json() as Promise<PublicPackageRecord>;
+            });
+            imported.push(entryFromPublicPackage(record, tag));
+            continue;
+          } catch {
+            // Fall back to share-id lookup below.
+          }
+        }
+        const shareId = shareIdFromInput(raw);
+        if (shareId) {
+          pkg = latest.packages.find((candidate) =>
+            candidate.package_hash_blake3.toLowerCase() === shareId ||
+            candidate.share_id?.toLowerCase() === shareId ||
+            candidate.share_code?.toLowerCase() === raw.toLowerCase(),
+          ) || null;
+        }
+        if (pkg) imported.push(entryFromPublicPackage(pkg, tag));
+        else missing.push(raw);
+      }
+      if (!imported.length) {
+        throw new Error(`No shared entries were found for: ${missing.join(", ")}`);
+      }
+      const current = readLocalMcdfLibrary();
+      const byId = new Map(current.map((entry) => [entry.id, entry]));
+      imported.forEach((entry) => byId.set(entry.id, { ...byId.get(entry.id), ...entry }));
+      writeLocalMcdfLibrary(Array.from(byId.values()));
+      window.dispatchEvent(new CustomEvent("mcdf-local-library-changed"));
+      const message = `Imported ${imported.length} shared entr${imported.length === 1 ? "y" : "ies"}${missing.length ? ` · ${missing.length} not found` : ""}.`;
+      finishOperation(opId, { status: "done", message, stage: { percent: 100, label: "Shared entries imported", detail: message } });
+      onClose();
+    } catch (e) {
+      const message = String(e);
+      setError(message);
+      finishOperation(opId, { status: "failed", message, stage: { percent: 100, label: "Shared import failed", detail: message } });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const addDraftToLibrary = () => {
+  const chooseDraftPreview = async () => {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        filters: [
+          {
+            name: "Preview image",
+            extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+          },
+        ],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      setPreviewImporting(true);
+      setError(null);
+      const cached = await cachePreviewImageForLibrary(selected);
+      setDraft((current) =>
+        current
+          ? { ...current, previewPath: cached, previewCrop: DEFAULT_PREVIEW_CROP }
+          : current,
+      );
+      setDraftPreviewImageFailed(false);
+      setDraftFramingOpen(true);
+    } catch (e) {
+      setError(`Preview image picker failed: ${String(e)}`);
+    } finally {
+      setPreviewImporting(false);
+    }
+  };
+
+  const previewLooksCacheReady = (previewPath?: string | null): boolean => {
+    if (!previewPath) return true;
+    const normalized = previewPath.replace(/\\/g, "/").toLowerCase();
+    return normalized.includes("/previews/") || /^(https?:|data:|blob:|asset:|tauri:)/i.test(previewPath.trim());
+  };
+
+  const prepareDraftPreviewPath = async (previewPath?: string | null): Promise<string | null> => {
+    if (!previewPath?.trim()) return null;
+    const trimmed = previewPath.trim();
+    if (/^(https?:|data:|blob:|asset:|tauri:)/i.test(trimmed)) return trimmed;
+    if (previewLooksCacheReady(trimmed)) return trimmed;
+    return cachePreviewImageForLibrary(trimmed);
+  };
+
+  const addDraftToLibrary = async () => {
     if (!draft) return;
     setLoading(true);
+    setError(null);
     try {
+      const finalPreviewPath = await prepareDraftPreviewPath(draft.previewPath);
       const current = readLocalMcdfLibrary();
       const isRemote = Boolean(
         draft.sourceType && draft.sourceType !== "local_file",
@@ -2612,7 +3464,8 @@ function AddMcdfEntryModal({
         title: draft.title.trim() || draft.fileName.replace(/\.mcdf$/i, ""),
         description: draft.description.trim(),
         tags: tagsFromText(draft.tags),
-        preview_image_path: draft.previewPath,
+        preview_image_path: finalPreviewPath,
+        preview_crop: draft.previewPath ? normalizePreviewCrop(draft.previewCrop) : null,
         is_adult: draft.isAdult,
         visibility: draft.visibility,
         package_hash_blake3:
@@ -2715,6 +3568,27 @@ function AddMcdfEntryModal({
                 {loading ? "Reading link…" : "Read link"}
               </GhostButton>
             </div>
+            <div className="remote-add-card refined-source-card">
+              <div className="eyebrow">Shared entries</div>
+              <h3>Import share codes or bulk links</h3>
+              <textarea
+                value={sharedImportText}
+                onChange={(e) => setSharedImportText(e.target.value)}
+                placeholder="mcdf.thebigtree.life:23147ff9...&#10;Paste one or more share codes, one per line"
+                rows={5}
+              />
+              <Field
+                value={sharedImportTag}
+                onChange={(e) => setSharedImportTag(e.target.value)}
+                placeholder="Optional tag for all imported entries"
+              />
+              <GhostButton
+                disabled={loading || !sharedImportText.trim()}
+                onClick={() => void importSharedEntries()}
+              >
+                {loading ? "Importing…" : "Import shared entries"}
+              </GhostButton>
+            </div>
             <div className="add-entry-progress-row">
               <AnalyzeProgressBar progress={progress} />
               <ErrorBox error={error} />
@@ -2722,28 +3596,45 @@ function AddMcdfEntryModal({
           </div>
         ) : draft ? (
           <div className="add-entry-review-grid">
-            <button
-              type="button"
-              className="entry-detail-preview entry-detail-preview-button add-preview-picker"
-              disabled={loading}
-              onClick={chooseDraftPreview}
-              title="Choose a preview image"
-            >
-              {draft.previewPath ? (
-                <img
-                  src={displayImageSrc(draft.previewPath) || undefined}
-                  alt={draft.title || draft.fileName}
-                />
-              ) : (
-                <div className="preview-placeholder large">✧</div>
+            <div className="add-preview-column">
+              <button
+                type="button"
+                className="entry-detail-preview entry-detail-preview-button add-preview-picker"
+                disabled={loading || previewImporting}
+                onClick={() =>
+                  draft.previewPath ? setDraftFramingOpen(true) : chooseDraftPreview()
+                }
+                title={draft.previewPath ? "Frame this preview image" : "Choose a preview image"}
+              >
+                {draft.previewPath && !draftPreviewImageFailed ? (
+                  <img
+                    src={displayImageSrc(draft.previewPath) || undefined}
+                    alt={draft.title || draft.fileName}
+                    style={previewImageStyle(draft.previewCrop)}
+                    onError={() => setDraftPreviewImageFailed(true)}
+                  />
+                ) : (
+                  <div className="preview-placeholder large">✧</div>
+                )}
+                <span className="preview-edit-chip">
+                  {previewImporting ? "Saving picture…" : draft.previewPath ? "Frame picture" : "Add picture"}
+                </span>
+              </button>
+              <div className="preview-cache-note" title={draft.previewPath || undefined}>
+                Preview image will be stored with this library entry.
+              </div>
+              {draft.previewPath && (
+                <GhostButton
+                  disabled={loading || previewImporting}
+                  onClick={chooseDraftPreview}
+                >
+                  Choose different picture
+                </GhostButton>
               )}
-              <span className="preview-edit-chip">
-                {draft.previewPath ? "Change picture" : "Add picture"}
-              </span>
-            </button>
+            </div>
             <div className="add-entry-review-form">
               <div className="modal-user-copy compact">
-                Review the library entry. These details stay local.
+                Review the library entry. These details stay local until published.
               </div>
               <label>
                 <span>Display name</span>
@@ -2776,50 +3667,64 @@ function AddMcdfEntryModal({
                   placeholder="Optional tags, comma separated"
                 />
               </label>
-              {kindsFromExtractedFiles(draft.files).length > 0 && (
-                <div className="add-entry-labels">
-                  <span>Detected labels</span>
-                  <div className="tag-row compact-tags label-row">
-                    {kindsFromExtractedFiles(draft.files)
-                      .slice(0, 8)
-                      .map((label) => (
-                        <span key={label}>{label}</span>
-                      ))}
-                  </div>
+              <div className="add-entry-detected-card">
+                <div className="add-entry-detected-head">
+                  <span>Detected information</span>
+                  <small>Read from the selected MCDF</small>
                 </div>
-              )}
-              <div className="analysis-status-strip add-entry-summary-strip">
-                <span>
-                  <strong>{draft.fileCount ?? draft.files.length}</strong> files
-                </span>
-                <span>
-                  <strong>
-                    {formatBytes(
-                      draft.totalBytes ??
-                        draft.files.reduce((sum, file) => sum + file.length, 0),
+                <table className="add-entry-detected-table">
+                  <tbody>
+                    <tr>
+                      <th>Files</th>
+                      <td>{draft.fileCount ?? draft.files.length}</td>
+                    </tr>
+                    <tr>
+                      <th>Size</th>
+                      <td>
+                        {formatBytes(
+                          draft.totalBytes ??
+                            draft.files.reduce((sum, file) => sum + file.length, 0),
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>Types</th>
+                      <td>
+                        {(
+                          draft.componentKinds ||
+                          kindsFromExtractedFiles(draft.files)
+                        )
+                          .slice(0, 8)
+                          .join(", ") || "MCDF package"}
+                      </td>
+                    </tr>
+                    {draft.info.description && (
+                      <tr>
+                        <th>Description</th>
+                        <td>Available in package metadata</td>
+                      </tr>
                     )}
-                  </strong>
-                </span>
-                <span>
-                  <strong>
-                    {(
-                      draft.componentKinds ||
-                      kindsFromExtractedFiles(draft.files)
-                    )
-                      .slice(0, 4)
-                      .join(", ") || "MCDF"}
-                  </strong>
-                </span>
+                    {draft.packageHash && (
+                      <tr>
+                        <th>Package hash</th>
+                        <td className="hash-cell">{shortHash(draft.packageHash)}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
-              <label className="check-row simple-adult-check">
+              <label className="adult-toggle-field">
                 <input
                   type="checkbox"
                   checked={draft.isAdult}
                   onChange={(event) =>
                     setDraft({ ...draft, isAdult: event.target.checked })
                   }
-                />{" "}
-                <span>18+</span>
+                />
+                <span className="adult-toggle-copy">
+                  <strong>18+</strong>
+                  <small>Mark this entry as adult content before adding it to the library.</small>
+                </span>
               </label>
               <div className="hero-actions">
                 <GhostButton
@@ -2828,13 +3733,28 @@ function AddMcdfEntryModal({
                 >
                   Back
                 </GhostButton>
-                <PrimaryButton disabled={loading} onClick={addDraftToLibrary}>
-                  {loading ? "Adding…" : "Add to Library"}
+                <PrimaryButton disabled={loading || previewImporting} onClick={addDraftToLibrary}>
+                  {loading ? "Adding…" : previewImporting ? "Saving picture…" : "Add to Library"}
                 </PrimaryButton>
               </div>
             </div>
           </div>
         ) : null}
+        {draftFramingOpen && draft?.previewPath && (
+          <PreviewFramingModal
+            image={draft.previewPath}
+            title={draft.title || draft.fileName}
+            crop={normalizePreviewCrop(draft.previewCrop)}
+            onClose={() => setDraftFramingOpen(false)}
+            onChooseImage={chooseDraftPreview}
+            onApply={(previewCrop) => {
+              setDraft((current) =>
+                current ? { ...current, previewCrop } : current,
+              );
+              setDraftFramingOpen(false);
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -2852,19 +3772,22 @@ function OnlineLibraryPanel({
     null,
   );
   const [indexUrl] = useState(
-    "https://raw.githubusercontent.com/obscure-crescent/moon-sparkles/main/public/indexes/latest.json",
+    PUBLIC_INDEX_LATEST_URL,
   );
   const [serverUrl] = useState(configuredArchiveHost());
   const [serverToken] = useState(storedAdminToken());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [autoImportMessage, setAutoImportMessage] = useState<string | null>(null);
   const [publishTitle, setPublishTitle] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
   const [publishTags, setPublishTags] = useState("");
   const [publishPreviewPath, setPublishPreviewPath] = useState<string | null>(
     null,
   );
+  const [entryFramingOpen, setEntryFramingOpen] = useState(false);
+  const [layersEntry, setLayersEntry] = useState<LocalMcdfEntry | null>(null);
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<
     | "all"
@@ -2881,6 +3804,8 @@ function OnlineLibraryPanel({
     | "restricted"
     | "potentially_illegal"
   >("all");
+  const [libraryTagFilter, setLibraryTagFilter] = useState("");
+  const [libraryFolderFilter, setLibraryFolderFilter] = useState("");
   const [librarySettings, setLibrarySettings] = useState<LocalLibrarySettings>(
     () => readLibrarySettings(),
   );
@@ -2893,6 +3818,9 @@ function OnlineLibraryPanel({
   const [publishingRulesOpen, setPublishingRulesOpen] = useState(false);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remotePreviewUrl, setRemotePreviewUrl] = useState("");
+  const [sharedImportText, setSharedImportText] = useState("");
+  const [sharedImportTag, setSharedImportTag] = useState("");
+  const [previewImporting, setPreviewImporting] = useState(false);
   const [creatorSubscriptions, setCreatorSubscriptions] = useState<string[]>(
     () => readCreatorSubscriptions(),
   );
@@ -2978,6 +3906,7 @@ function OnlineLibraryPanel({
       description: pkg.description || "",
       tags: pkg.tags || [],
       preview_image_path: pkg.preview_image_path || null,
+      preview_crop: null,
       is_adult: Boolean(pkg.is_adult),
       visibility: (pkg.visibility as McdfVisibility) || "public",
       package_hash_blake3: pkg.package_hash_blake3,
@@ -3039,28 +3968,20 @@ function OnlineLibraryPanel({
     const base = indexUrl.replace(/\/indexes\/latest\.json(?:\?.*)?$/i, "");
     return `${base}/${path.replace(/^\/+/, "")}`;
   };
-  const publicExchangeShareText = (entry: LocalMcdfEntry): string => {
+  const shareIdForEntry = (entry: LocalMcdfEntry): string | null => {
     const pkg = entry.package_hash_blake3
       ? publicPackagesByHash.get(entry.package_hash_blake3)
       : null;
-    const manifestUrl = publicIndexAssetUrl(
-      pkg?.download_manifest_path ||
-        entry.download_url ||
-        pkg?.package_manifest_path ||
-        entry.manifest_url,
-    );
-    const title =
-      entry.title && !entry.title.includes("\\")
-        ? entry.title
-        : basename(entry.original_filename || entry.local_path || "MCDF entry");
-    return [
-      `${title} on The Eorzea Exchange`,
-      `Package hash: ${entry.package_hash_blake3 || "unknown"}`,
-      manifestUrl
-        ? `Download manifest: ${manifestUrl}`
-        : `Public index: ${indexUrl}`,
-      "Open this with MCDF Manager to add it to your Library.",
-    ].join("\n");
+    return pkg?.share_id || entry.package_hash_blake3 || null;
+  };
+  const exchangeShareCode = (entry: LocalMcdfEntry): string | null => {
+    const shareId = shareIdForEntry(entry);
+    return shareId ? `mcdf.thebigtree.life:${shareId}` : null;
+  };
+  const publicExchangeShareText = (entry: LocalMcdfEntry): string => {
+    const shareCode = exchangeShareCode(entry);
+    if (shareCode) return shareCode;
+    return `mcdf.thebigtree.life:${entry.package_hash_blake3 || entry.id}`;
   };
   const entryPublicLabel = (entry: LocalMcdfEntry): string =>
     entryListedPublicly(entry)
@@ -3184,6 +4105,47 @@ function OnlineLibraryPanel({
       );
     };
   }, []);
+
+  useEffect(() => {
+    void scanAutoImportFolders(true);
+    const interval = window.setInterval(() => {
+      void scanAutoImportFolders(true);
+    }, 120000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const availableLibraryTags = Array.from(
+    new Set(
+      combinedEntries
+        .flatMap((entry) => entry.tags || [])
+        .map((tag) => tag.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+  const promotedLibraryFolders = librarySettings.libraryFolderTags.filter((tag) =>
+    availableLibraryTags.includes(tag),
+  );
+
+  const promoteSelectedTagToFolder = () => {
+    const tag = (libraryTagFilter || librarySearch.replace(/^#/, "")).trim().toLowerCase();
+    if (!tag) {
+      setActionMessage("Choose a tag first, then pin it as a folder.");
+      return;
+    }
+    const nextFolders = Array.from(new Set([tag, ...librarySettings.libraryFolderTags])).slice(0, 32);
+    saveLibrarySettings({ libraryFolderTags: nextFolders });
+    setLibraryFolderFilter(tag);
+    setActionMessage(`#${tag} is now shown as a Library folder.`);
+  };
+
+  const removeCurrentFolder = () => {
+    if (!libraryFolderFilter) return;
+    const nextFolders = librarySettings.libraryFolderTags.filter((tag) => tag !== libraryFolderFilter);
+    saveLibrarySettings({ libraryFolderTags: nextFolders });
+    setLibraryFolderFilter("");
+    setActionMessage("Library folder removed. Entries and tags were not changed.");
+  };
+
   const filteredEntries = combinedEntries.filter((entry) => {
     const haystack =
       `${entry.title} ${entry.original_filename} ${entry.description} ${entry.tags.join(" ")} ${entry.component_kinds.join(" ")} ${entry.source_url || ""}`.toLowerCase();
@@ -3207,7 +4169,10 @@ function OnlineLibraryPanel({
       (libraryFilter === "potentially_illegal" &&
         entry.sharing_policy?.classification === "potentially_illegal") ||
       entry.storage_state === libraryFilter;
-    return matchesSearch && matchesFilter && adultVisible;
+    const entryTags = (entry.tags || []).map((tag) => tag.toLowerCase());
+    const matchesTagFilter = !libraryTagFilter || entryTags.includes(libraryTagFilter);
+    const matchesFolderFilter = !libraryFolderFilter || entryTags.includes(libraryFolderFilter);
+    return matchesSearch && matchesFilter && adultVisible && matchesTagFilter && matchesFolderFilter;
   });
 
   const closeDetailsWhenClickingOutside = (
@@ -3236,6 +4201,88 @@ function OnlineLibraryPanel({
       setSelectedId(null);
   };
 
+  const entryFromAutoImportCandidate = (candidate: AutoImportCandidate, existing?: LocalMcdfEntry): LocalMcdfEntry => ({
+    id: existing?.id || localEntryId(candidate.local_path),
+    local_path: candidate.local_path,
+    source_type: "local_file",
+    source_url: null,
+    source_label: "Auto-import folder",
+    remote_annotation: "Imported automatically from a configured folder.",
+    missing_registry_percent: null,
+    original_filename: candidate.original_filename,
+    title: existing?.title || candidate.title,
+    description: existing?.description || candidate.description || "",
+    tags: existing?.tags || [],
+    preview_image_path: existing?.preview_image_path || null,
+    preview_crop: existing?.preview_crop || null,
+    is_adult: existing?.is_adult || false,
+    visibility: existing?.visibility || "public",
+    package_hash_blake3: candidate.package_hash_blake3,
+    file_count: candidate.file_count,
+    total_file_bytes: candidate.total_file_bytes,
+    component_kinds: candidate.component_kinds || [],
+    file_manifest: candidate.file_manifest || [],
+    sharing_policy: existing?.sharing_policy || null,
+    storage_state: existing?.storage_state || "offline",
+    last_checked_at: new Date().toISOString(),
+    last_published_at: existing?.last_published_at || null,
+    manifest_url: existing?.manifest_url || null,
+    download_url: existing?.download_url || null,
+    notes: [
+      ...(candidate.notes || []),
+      ...(existing?.notes || []),
+    ].filter(Boolean),
+  });
+
+  const scanAutoImportFolders = async (quiet = false) => {
+    setLoading(true);
+    if (!quiet) {
+      setError(null);
+      setAutoImportMessage("Scanning watched folders…");
+    }
+    try {
+      const settings = await invoke<StorageSettingsResponse>(
+        "get_storage_settings",
+      );
+      const folders = settings.auto_import_dirs || [];
+      if (!folders.length) {
+        if (!quiet) setAutoImportMessage("No watched auto-import folders are configured yet.");
+        return;
+      }
+      let current = readLocalMcdfLibrary();
+      let imported = 0;
+      let scanned = 0;
+      const notes: string[] = [];
+      for (const folder of folders) {
+        const result = await invoke<AutoImportFolderResult>(
+          "scan_auto_import_folder",
+          { folder, recursive: settings.auto_import_recursive },
+        );
+        scanned += result.scanned_file_count;
+        notes.push(...(result.notes || []));
+        for (const candidate of result.entries || []) {
+          const existing = current.find(
+            (entry) =>
+              entry.local_path === candidate.local_path ||
+              (candidate.package_hash_blake3 &&
+                entry.package_hash_blake3 === candidate.package_hash_blake3),
+          );
+          if (existing) continue;
+          const entry = entryFromAutoImportCandidate(candidate);
+          current = [entry, ...current];
+          imported += 1;
+        }
+      }
+      saveEntries(current);
+      const message = `${imported} new MCDF${imported === 1 ? "" : "s"} imported · ${scanned} file${scanned === 1 ? "" : "s"} scanned`;
+      setAutoImportMessage(notes.length ? `${message}. ${notes[0]}` : message);
+    } catch (e) {
+      if (!quiet) setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const saveLibrarySettings = (patch: Partial<LocalLibrarySettings>) => {
     const next = { ...librarySettings, ...patch };
     setLibrarySettings(next);
@@ -3251,23 +4298,32 @@ function OnlineLibraryPanel({
   };
 
   const choosePreview = async () => {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [
-        {
-          name: "Preview image",
-          extensions: ["png", "jpg", "jpeg", "webp", "gif"],
-        },
-      ],
-    });
-    if (!selected || Array.isArray(selected)) return;
-    setPublishPreviewPath(selected);
-    if (
-      selectedEntry &&
-      !selectedEntry.id.startsWith("subscribed-") &&
-      !selectedEntry.id.startsWith("removed-")
-    )
-      updateEntry(selectedEntry.id, { preview_image_path: selected });
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        filters: [
+          {
+            name: "Preview image",
+            extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+          },
+        ],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const cached = await cachePreviewImageForLibrary(selected);
+      setPublishPreviewPath(cached);
+      if (
+        selectedEntry &&
+        !selectedEntry.id.startsWith("subscribed-") &&
+        !selectedEntry.id.startsWith("removed-")
+      )
+        updateEntry(selectedEntry.id, {
+          preview_image_path: cached,
+          preview_crop: DEFAULT_PREVIEW_CROP,
+        });
+      setEntryFramingOpen(true);
+    } catch (e) {
+      setError(`Preview image picker failed: ${String(e)}`);
+    }
   };
 
   const clearPreview = () => {
@@ -3277,7 +4333,7 @@ function OnlineLibraryPanel({
       !selectedEntry.id.startsWith("subscribed-") &&
       !selectedEntry.id.startsWith("removed-")
     )
-      updateEntry(selectedEntry.id, { preview_image_path: null });
+      updateEntry(selectedEntry.id, { preview_image_path: null, preview_crop: null });
   };
 
   const addMcdfToLibrary = async () => {
@@ -3615,12 +4671,22 @@ function OnlineLibraryPanel({
         label={
           entry.storage_state === "subscribed" ||
           entry.storage_state === "removed"
-            ? "Remove subscription"
-            : "Remove from library"
+            ? "Hold Ctrl and click to remove subscription"
+            : "Hold Ctrl and click to remove from library"
         }
         disabled={loading}
         className="library-action-button danger"
-        onClick={() => removeEntry(entry)}
+        onClick={(event) => {
+          if (!event.ctrlKey) {
+            setActionMessage(
+              entry.storage_state === "subscribed" || entry.storage_state === "removed"
+                ? "Hold Ctrl and click Remove to remove this subscription."
+                : "Hold Ctrl and click Remove to remove this MCDF from the library.",
+            );
+            return;
+          }
+          removeEntry(entry);
+        }}
       >
         ×
       </IconButton>
@@ -3972,9 +5038,19 @@ function OnlineLibraryPanel({
           : "published online",
       });
     } catch (e) {
-      updateEntry(entry.id, { storage_state: "failed", notes: [String(e)] });
-      finishOperation(opId, { status: "failed", message: String(e) });
-      setError(String(e));
+      const rawError = String(e);
+      const debugContext = publishDebugContext(entry, {
+        serverUrl,
+        previewPath: nextPreviewPath,
+        hasBearerToken: Boolean(serverToken.trim()),
+        hasPublisherCertificate: Boolean(localStorage.getItem("mcdf.publisher.certificate")),
+        hasPublisherPublicKey: Boolean(localStorage.getItem("mcdf.publisher.publicKey.spki")),
+        visibility: nextVisibility,
+      });
+      const detailedError = `${rawError}\n\n${debugContext}`;
+      updateEntry(entry.id, { storage_state: "failed", notes: [detailedError] });
+      finishOperation(opId, { status: "failed", message: rawError });
+      setError(detailedError);
     } finally {
       setLoading(false);
     }
@@ -3989,6 +5065,7 @@ function OnlineLibraryPanel({
       setPublishIsAdult(Boolean(entryIsAdult(selectedEntry)));
       setPublishVisibility(selectedEntry.visibility || "public");
     }
+    setEntryFramingOpen(false);
     setEditEntryDetails(false);
   }, [selectedEntry?.id]);
 
@@ -4075,6 +5152,11 @@ function OnlineLibraryPanel({
             <div className="font-semibold">{actionMessage}</div>
           </SuccessBox>
         )}
+        {autoImportMessage && (
+          <SuccessBox>
+            <div className="font-semibold">{autoImportMessage}</div>
+          </SuccessBox>
+        )}
         <Panel className="library-results-section">
           <div className="library-results-header">
             <div>
@@ -4127,14 +5209,47 @@ function OnlineLibraryPanel({
               <option value="restricted">Restricted</option>
               <option value="potentially_illegal">Potentially illegal</option>
             </select>
-            {storedAdminToken().trim() && (
-              <span
-                className="flat-status"
-                title="Moderation policy is managed from Admin. Publishing asks the registry to enforce blocked hashes."
-              >
-                moderation active
-              </span>
+            <select
+              value={libraryFolderFilter}
+              onChange={(e) => {
+                setLibraryFolderFilter(e.target.value);
+                if (e.target.value) setLibraryTagFilter("");
+              }}
+              title="Pinned tag folders keep related MCDFs together without moving files on disk."
+            >
+              <option value="">All folders</option>
+              {promotedLibraryFolders.map((tag) => (
+                <option key={tag} value={tag}>
+                  #{tag}
+                </option>
+              ))}
+            </select>
+            <select
+              value={libraryTagFilter}
+              onChange={(e) => {
+                setLibraryTagFilter(e.target.value);
+                if (e.target.value) setLibraryFolderFilter("");
+              }}
+              title="Filter by any tag. Pin a tag to make it a folder."
+            >
+              <option value="">All tags</option>
+              {availableLibraryTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  #{tag}
+                </option>
+              ))}
+            </select>
+            <GhostButton disabled={!libraryTagFilter && !librarySearch.trim()} onClick={promoteSelectedTagToFolder}>
+              Pin tag as folder
+            </GhostButton>
+            {libraryFolderFilter && (
+              <GhostButton onClick={removeCurrentFolder}>
+                Unpin folder
+              </GhostButton>
             )}
+            <GhostButton disabled={loading} onClick={() => void scanAutoImportFolders(false)}>
+              Scan watched folders
+            </GhostButton>
           </div>
           {combinedEntries.length === 0 ? (
             <p className="empty-small">
@@ -4183,10 +5298,11 @@ function OnlineLibraryPanel({
                   </button>
                   <button
                     type="button"
-                    className="table-cell-button"
-                    onClick={() => selectEntry(entry)}
+                    className="table-cell-button file-count-link"
+                    onClick={() => { selectEntry(entry); setLayersEntry(entry); }}
+                    title="View MCDF layers and files"
                   >
-                    {entry.file_count}
+                    {entry.file_count} files
                   </button>
                   <button
                     type="button"
@@ -4254,6 +5370,7 @@ function OnlineLibraryPanel({
                   >
                     <PreviewTile
                       image={entry.preview_image_path}
+                      crop={entry.preview_crop}
                       title={entry.title || entry.original_filename}
                       adult={entryIsAdult(entry)}
                     />
@@ -4268,8 +5385,15 @@ function OnlineLibraryPanel({
                           )}
                     </strong>
                     <span>
-                      {entry.file_count} files ·{" "}
-                      {formatBytes(entry.total_file_bytes)}
+                      <button
+                        type="button"
+                        className="inline-link file-count-inline"
+                        onClick={(event) => { event.stopPropagation(); selectEntry(entry); setLayersEntry(entry); }}
+                        title="View MCDF layers and files"
+                      >
+                        {entry.file_count} files
+                      </button>{" "}
+                      · {formatBytes(entry.total_file_bytes)}
                     </span>
                     {entry.sharing_policy?.status === "blocked" && (
                       <span className="card-blocked-line">
@@ -4310,6 +5434,14 @@ function OnlineLibraryPanel({
           )}
         </Panel>
       </div>
+      {layersEntry && (
+        <LayerInventoryModal
+          entry={layersEntry}
+          onClose={() => setLayersEntry(null)}
+          onError={setError}
+          onMessage={setActionMessage}
+        />
+      )}
       {selectedEntry && detailsPaneOpen && (
         <aside className="right-stack elevated-detail-pane">
           <Panel className="entry-detail-card">
@@ -4321,22 +5453,40 @@ function OnlineLibraryPanel({
                 selectedEntry.storage_state === "subscribed" ||
                 selectedEntry.storage_state === "removed"
               }
-              onClick={choosePreview}
-              title="Change MCDF preview image"
+              onClick={() =>
+                publishPreviewPath ? setEntryFramingOpen(true) : choosePreview()
+              }
+              title={publishPreviewPath ? "Frame MCDF preview image" : "Choose MCDF preview image"}
             >
               {publishPreviewPath ? (
                 <img
                   src={displayImageSrc(publishPreviewPath) || undefined}
                   alt={publishTitle || selectedEntry.original_filename}
+                  style={previewImageStyle(selectedEntry.preview_crop)}
                 />
               ) : (
                 <div className="preview-placeholder large">✧</div>
               )}
               {selectedEntry.storage_state !== "subscribed" &&
                 selectedEntry.storage_state !== "removed" && (
-                  <span className="preview-edit-chip">Change picture</span>
+                  <span className="preview-edit-chip">
+                    {publishPreviewPath ? "Frame picture" : "Add picture"}
+                  </span>
                 )}
             </button>
+            {entryFramingOpen && publishPreviewPath && (
+              <PreviewFramingModal
+                image={publishPreviewPath}
+                title={publishTitle || selectedEntry.original_filename}
+                crop={normalizePreviewCrop(selectedEntry.preview_crop)}
+                onClose={() => setEntryFramingOpen(false)}
+                onChooseImage={choosePreview}
+                onApply={(preview_crop) => {
+                  updateEntry(selectedEntry.id, { preview_crop });
+                  setEntryFramingOpen(false);
+                }}
+              />
+            )}
             <div className="entry-detail-pill-row">
               {detailStatusPills(selectedEntry).map((pill) => (
                 <span
@@ -4413,6 +5563,13 @@ function OnlineLibraryPanel({
                     </div>
                   </div>
                 )}
+                <button
+                  type="button"
+                  className="inline-link detail-files-link"
+                  onClick={() => setLayersEntry(selectedEntry)}
+                >
+                  {selectedEntry.file_count} files
+                </button>
               </div>
             ) : (
               <div className="published-detail">
@@ -4543,15 +5700,7 @@ function OnlineLibraryPanel({
                 </p>
               </div>
               <LibraryEntryActions entry={selectedEntry} />
-              {storedAdminToken().trim() && (
-                <GhostButton
-                  disabled={loading}
-                  onClick={() => void refreshSelectedSharingPolicy()}
-                  title="Refresh this entry against the admin moderation blocklist. No MCDF bytes are uploaded."
-                >
-                  Refresh moderation status
-                </GhostButton>
-              )}
+
             </div>
             {!hasStoredClientAuth() && (
               <p className="empty-small">
@@ -4821,7 +5970,7 @@ function SharedArchiveConnectModal({
         setPublisherIdentity(identity);
         notifyClientAuthChanged();
       }
-      localStorage.setItem("mcdf.archive.host", serverUrl);
+      localStorage.removeItem("mcdf.archive.host");
       onConnected(health, config);
     } catch (e) {
       setError(String(e));
@@ -4836,18 +5985,18 @@ function SharedArchiveConnectModal({
         <div className="panel-title-row">
           <div>
             <div className="eyebrow">Register</div>
-            <h2>{clientAuthorized ? "Connect" : "Register and Connect"}</h2>
+            <h2>{clientAuthorized ? "Connect" : "Register new account"}</h2>
           </div>
         </div>
         <p>
-          Register when you want to make use of community services or want to
-          upload Character files. Browsing the exchange does not require an
-          account.
+          Register a server-side publisher account when you want to use
+          community services or upload Character files. Browsing the Exchange
+          does not require an account.
         </p>
         {!clientAuthorized && (
           <>
             <p>
-              Enter the display name shown on your profile, or import an
+              Enter the display name for your new server profile, or import an
               existing <span className="inline-code">.mcdfauth</span> package
               from another computer.
             </p>
@@ -4904,7 +6053,7 @@ function SharedArchiveConnectModal({
               ? "Working…"
               : clientAuthorized
                 ? "Connect"
-                : "Register and Connect"}
+                : "Register new account"}
           </PrimaryButton>
           <GhostButton disabled={loading} onClick={onClose}>
             Cancel
@@ -5059,9 +6208,12 @@ function StorageFoldersPanel({
   const [settings, setSettings] = useState<StorageSettingsResponse | null>(
     null,
   );
+  const [settingsFile, setSettingsFile] = useState("");
   const [libraryDir, setLibraryDir] = useState("");
   const [exchangeCacheDir, setExchangeCacheDir] = useState("");
   const [downloadsDir, setDownloadsDir] = useState("");
+  const [autoImportText, setAutoImportText] = useState("");
+  const [autoImportRecursive, setAutoImportRecursive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -5072,9 +6224,12 @@ function StorageFoldersPanel({
         "get_storage_settings",
       );
       setSettings(value);
+      setSettingsFile(value.settings_file);
       setLibraryDir(value.library_dir);
       setExchangeCacheDir(value.exchange_cache_dir);
       setDownloadsDir(value.downloads_dir);
+      setAutoImportText((value.auto_import_dirs || []).join("\n"));
+      setAutoImportRecursive(Boolean(value.auto_import_recursive));
     } catch (e) {
       setError(String(e));
     }
@@ -5088,14 +6243,42 @@ function StorageFoldersPanel({
     if (selected && !Array.isArray(selected)) setter(selected);
   };
 
+  const chooseSettingsFile = async () => {
+    const selected = await openDialog({
+      directory: false,
+      multiple: false,
+      defaultPath: settingsFile || undefined,
+      filters: [{ name: "MCDF Manager config", extensions: ["json"] }],
+    });
+    if (selected && !Array.isArray(selected)) setSettingsFile(selected);
+  };
+
+  const addAutoImportFolder = async () => {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (!selected || Array.isArray(selected)) return;
+    const existing = autoImportText
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!existing.some((value) => value.toLowerCase() === selected.toLowerCase())) {
+      setAutoImportText([...existing, selected].join("\n"));
+    }
+  };
+
   const saveFolders = async () => {
     setLoading(true);
     setError(null);
     try {
       const update: StorageSettingsUpdateRequest = {
+        settings_file: settingsFile.trim() || null,
         library_dir: libraryDir.trim() || null,
         exchange_cache_dir: exchangeCacheDir.trim() || null,
         downloads_dir: downloadsDir.trim() || null,
+        auto_import_dirs: autoImportText
+          .split(/\r?\n/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+        auto_import_recursive: autoImportRecursive,
         initialized: true,
       };
       const next = await invoke<StorageSettingsResponse>(
@@ -5103,9 +6286,12 @@ function StorageFoldersPanel({
         { update },
       );
       setSettings(next);
+      setSettingsFile(next.settings_file);
       setLibraryDir(next.library_dir);
       setExchangeCacheDir(next.exchange_cache_dir);
       setDownloadsDir(next.downloads_dir);
+      setAutoImportText((next.auto_import_dirs || []).join("\n"));
+      setAutoImportRecursive(Boolean(next.auto_import_recursive));
       acknowledgeStorageSetup();
       onSaved?.(next);
     } catch (e) {
@@ -5144,6 +6330,20 @@ function StorageFoldersPanel({
         attention.
       </p>
       <div className="storage-folder-grid">
+        <label className="wide-field">
+          <span>Config file</span>
+          <div className="folder-row">
+            <Field
+              value={settingsFile}
+              onChange={(e) => setSettingsFile(e.target.value)}
+              placeholder="Select an existing MCDF Manager config JSON file"
+            />
+            <GhostButton onClick={chooseSettingsFile}>Choose existing</GhostButton>
+          </div>
+          <small>
+            Choose an existing config file to use it. Saving Settings updates that file; it does not create a new file picker overwrite prompt.
+          </small>
+        </label>
         <label>
           <span>My Library folder</span>
           <div className="folder-row">
@@ -5183,6 +6383,28 @@ function StorageFoldersPanel({
             </GhostButton>
           </div>
         </label>
+        <label className="wide-field">
+          <span>Auto-import watched folders</span>
+          <textarea
+            value={autoImportText}
+            onChange={(event) => setAutoImportText(event.target.value)}
+            placeholder="One folder per line. New .mcdf files placed here are automatically added to your library."
+            rows={4}
+          />
+          <span className="field-hint">
+            You can import MCDF files from anywhere. These folders are watched
+            while MCDF Manager is open and are scanned automatically for new
+            packages.
+          </span>
+        </label>
+        <label className="checkbox-row wide-field">
+          <input
+            type="checkbox"
+            checked={autoImportRecursive}
+            onChange={(event) => setAutoImportRecursive(event.target.checked)}
+          />
+          <span>Include subfolders in automatic import</span>
+        </label>
       </div>
       <div className="hero-actions">
         <PrimaryButton disabled={loading} onClick={saveFolders}>
@@ -5191,11 +6413,14 @@ function StorageFoldersPanel({
         <GhostButton disabled={loading} onClick={loadSettings}>
           Reload
         </GhostButton>
+        <GhostButton disabled={loading} onClick={addAutoImportFolder}>
+          Add watched folder
+        </GhostButton>
       </div>
       <ErrorBox error={error} />
       {settings && (
         <div className="empty-small">
-          Settings file:{" "}
+          Active config file:{" "}
           <span className="inline-code">{settings.settings_file}</span>
         </div>
       )}
@@ -5253,17 +6478,22 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
     localStorage.getItem("mcdf.publisher.registeredAt") ||
     "";
   const chooseProfileImage = async () => {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [
-        {
-          name: "Profile image",
-          extensions: ["png", "jpg", "jpeg", "webp", "gif"],
-        },
-      ],
-    });
-    if (!selected || Array.isArray(selected)) return;
-    setProfile((current) => ({ ...current, image: selected }));
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        filters: [
+          {
+            name: "Profile image",
+            extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+          },
+        ],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const cached = await cachePreviewImageForLibrary(selected);
+      setProfile((current) => ({ ...current, image: cached }));
+    } catch (e) {
+      setError(`Profile image picker failed: ${String(e)}`);
+    }
   };
   const exportClientAuthFromProfile = async () => {
     setError(null);
@@ -5330,7 +6560,7 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
         <div className="panel-title-row refined-modal-head">
           <div>
             <div className="eyebrow">Profile</div>
-            <h2>Public profile</h2>
+            <h2>Server profile</h2>
           </div>
           <button
             type="button"
@@ -5341,6 +6571,12 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
             ×
           </button>
         </div>
+        <p className="compact-note">
+          Your public publisher profile belongs to the registry server. MCDF
+          Manager keeps this local copy so the client can sign requests, show
+          your current identity, and export a migration package for another
+          install.
+        </p>
         <div className="profile-editor-grid">
           <button
             type="button"
@@ -5417,7 +6653,7 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <div className="hero-actions modal-actions">
-          <PrimaryButton onClick={saveProfile}>Save profile</PrimaryButton>
+          <PrimaryButton onClick={saveProfile}>Save local profile cache</PrimaryButton>
           <GhostButton
             disabled={!hasStoredClientAuth()}
             onClick={exportClientAuthFromProfile}
@@ -5453,20 +6689,33 @@ function SettingsPanel({
 }) {
   const [cacheDir, setCacheDir] = useState("loading…");
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
+  const [storageUsage, setStorageUsage] = useState<StorageUsageResponse | null>(null);
+  const [storageUsageLoading, setStorageUsageLoading] = useState(false);
+  const [settingsFavoriteHashes, setSettingsFavoriteHashes] = useState<string[]>(() =>
+    JSON.parse(localStorage.getItem("mcdf.exchange.favorites.v1") || "[]"),
+  );
+  const [settingsCreatorSubscriptions, setSettingsCreatorSubscriptions] = useState<string[]>(
+    () => readCreatorSubscriptions(),
+  );
+  const [settingsPackageSubscriptions, setSettingsPackageSubscriptions] = useState<string[]>(
+    () => readPackageSubscriptions(),
+  );
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState<string | null>(null);
   const [serverUsers, setServerUsers] = useState<UserPermissionRecord[]>([]);
   const [generatedToken, setGeneratedToken] =
     useState<GenerateAdminTokenResponse | null>(null);
-  const [serverUrl, setServerUrl] = useState(configuredArchiveHost());
-  const [archiveEndpoint, setArchiveEndpoint] = useState(
-    "http://localhost:48443",
-  );
+  const [serverUrl] = useState(MCDF_REGISTRY_URL);
+  const [archiveEndpoint, setArchiveEndpoint] = useState(MCDF_REGISTRY_URL);
   const [serverToken] = useState(storedAdminToken());
   const [adminToken, setAdminToken] = useState(storedAdminToken());
+  const [savedAdminToken, setSavedAdminToken] = useState(storedAdminToken());
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const [tokenMessage, setTokenMessage] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
   const [publicIndexUrl] = useState(
-    "https://raw.githubusercontent.com/obscure-crescent/moon-sparkles/main/public/indexes/latest.json",
+    PUBLIC_INDEX_LATEST_URL,
   );
   const [publicIndex, setPublicIndex] = useState<PublicIndexLatest | null>(
     null,
@@ -5534,16 +6783,60 @@ function SettingsPanel({
       .then((settings) => {
         setCacheDir(settings.exchange_cache_dir);
         if (settings.admin_token?.trim()) {
-          setAdminToken(settings.admin_token.trim());
-          localStorage.setItem(ADMIN_TOKEN_KEY, settings.admin_token.trim());
-          localStorage.setItem(
-            LEGACY_UPLOAD_TOKEN_KEY,
-            settings.admin_token.trim(),
-          );
+          const savedToken = settings.admin_token.trim();
+          setAdminToken(savedToken);
+          setSavedAdminToken(savedToken);
+          localStorage.setItem(ADMIN_TOKEN_KEY, savedToken);
+          localStorage.setItem(LEGACY_UPLOAD_TOKEN_KEY, savedToken);
+          window.dispatchEvent(new Event("mcdf-admin-token-changed"));
+        } else {
+          const localToken = storedAdminToken().trim();
+          setAdminToken(localToken);
+          setSavedAdminToken(localToken);
         }
       })
       .catch((e) => setCacheDir(String(e)));
   }, []);
+
+  const refreshStorageUsage = async () => {
+    setStorageUsageLoading(true);
+    setServerError(null);
+    try {
+      setStorageUsage(await invoke<StorageUsageResponse>("get_storage_usage"));
+    } catch (error) {
+      setServerError(String(error));
+    } finally {
+      setStorageUsageLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshStorageUsage().catch(console.error);
+  }, []);
+
+  const refreshExchangeLists = () => {
+    setSettingsFavoriteHashes(JSON.parse(localStorage.getItem("mcdf.exchange.favorites.v1") || "[]"));
+    setSettingsCreatorSubscriptions(readCreatorSubscriptions());
+    setSettingsPackageSubscriptions(readPackageSubscriptions());
+  };
+
+  const clearExchangeFavorites = () => {
+    localStorage.setItem("mcdf.exchange.favorites.v1", "[]");
+    refreshExchangeLists();
+  };
+
+  const clearCreatorSubscriptions = () => {
+    writeCreatorSubscriptions([]);
+    window.dispatchEvent(new Event("mcdf-creator-subscriptions-changed"));
+    refreshExchangeLists();
+  };
+
+  const clearPackageSubscriptions = () => {
+    writePackageSubscriptions([]);
+    writePackageSubscriptionSnapshots({});
+    window.dispatchEvent(new Event("mcdf-creator-subscriptions-changed"));
+    refreshExchangeLists();
+  };
   const clearLocalCache = async () => {
     setServerLoading(true);
     setServerError(null);
@@ -5558,11 +6851,11 @@ function SettingsPanel({
     }
   };
   useEffect(() => {
-    localStorage.setItem("mcdf.archive.host", serverUrl);
-    invoke<string>("resolve_archive_endpoint", { serverUrl })
+    localStorage.removeItem("mcdf.archive.host");
+    invoke<string>("resolve_archive_endpoint", { serverUrl: MCDF_REGISTRY_URL })
       .then(setArchiveEndpoint)
-      .catch(() => setArchiveEndpoint(""));
-  }, [serverUrl]);
+      .catch(() => setArchiveEndpoint(MCDF_REGISTRY_URL));
+  }, []);
 
   const testServer = async () => {
     setServerLoading(true);
@@ -5769,7 +7062,7 @@ function SettingsPanel({
         ],
       });
       notifyClientAuthChanged();
-      if (authPackage.archive_host) setServerUrl(authPackage.archive_host);
+      localStorage.removeItem("mcdf.archive.host");
       setClientAuthPackagePath(selected);
     } catch (e) {
       setServerError(String(e));
@@ -5832,17 +7125,22 @@ function SettingsPanel({
   };
 
   const choosePublishPreview = async () => {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [
-        {
-          name: "Preview image",
-          extensions: ["png", "jpg", "jpeg", "webp", "gif"],
-        },
-      ],
-    });
-    if (!selected || Array.isArray(selected)) return;
-    setPublishPreviewPath(selected);
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        filters: [
+          {
+            name: "Preview image",
+            extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+          },
+        ],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const cached = await cachePreviewImageForLibrary(selected);
+      setPublishPreviewPath(cached);
+    } catch (e) {
+      setServerError(`Preview image picker failed: ${String(e)}`);
+    }
   };
 
   const uploadTestMcdf = async () => {
@@ -6019,6 +7317,40 @@ function SettingsPanel({
     }
   };
 
+  const saveSettingsAdminToken = async () => {
+    const nextToken = adminToken.trim();
+    setTokenSaving(true);
+    setTokenError(null);
+    setTokenMessage(null);
+    try {
+      await saveAdminToken(nextToken);
+      const storedToken = storedAdminToken().trim();
+      setSavedAdminToken(storedToken);
+      setAdminToken(storedToken);
+      setTokenMessage(storedToken ? "Server token saved. Admin is now available." : "Server token cleared.");
+    } catch (error) {
+      setTokenError(String(error));
+    } finally {
+      setTokenSaving(false);
+    }
+  };
+
+  const clearSettingsAdminToken = async () => {
+    setAdminToken("");
+    setTokenSaving(true);
+    setTokenError(null);
+    setTokenMessage(null);
+    try {
+      await saveAdminToken("");
+      setSavedAdminToken("");
+      setTokenMessage("Server token cleared.");
+    } catch (error) {
+      setTokenError(String(error));
+    } finally {
+      setTokenSaving(false);
+    }
+  };
+
   const generateReplacementAdminToken = async () => {
     if (!adminToken.trim()) {
       setReportsError(
@@ -6045,7 +7377,9 @@ function SettingsPanel({
       );
       setGeneratedToken(result);
       setAdminToken(result.token);
-      void saveAdminToken(result.token);
+      await saveAdminToken(result.token);
+      setSavedAdminToken(result.token);
+      setTokenMessage("Replacement admin token saved. Admin is now available.");
     } catch (error) {
       setReportsError(String(error));
     } finally {
@@ -6053,7 +7387,8 @@ function SettingsPanel({
     }
   };
 
-  const tokenConfigured = Boolean(adminToken.trim());
+  const tokenConfigured = Boolean(savedAdminToken.trim());
+  const tokenHasChanges = adminToken.trim() !== savedAdminToken.trim();
   return (
     <div className="settings-screen integrated-settings slim-settings">
       {publishingRulesOpen && (
@@ -6066,9 +7401,50 @@ function SettingsPanel({
         />
       )}
       <StorageFoldersPanel
-        onSaved={(settings) => setCacheDir(settings.exchange_cache_dir)}
+        onSaved={(settings) => {
+          setCacheDir(settings.exchange_cache_dir);
+          void refreshStorageUsage();
+        }}
       />
-      <Panel>
+      <Panel className="settings-section-panel">
+        <div className="panel-title-row">
+          <div>
+            <div className="eyebrow">Disk usage</div>
+            <h2>Local MCDF Manager storage</h2>
+          </div>
+          <span className="status-pill status-neutral">
+            {storageUsage ? formatBytes(storageUsage.total_bytes) : "checking"}
+          </span>
+        </div>
+        <p className="empty-small">
+          This is the space used by the local library, Exchange cache, downloads, and app home folders on this machine.
+        </p>
+        {storageUsage ? (
+          <div className="storage-usage-table">
+            {storageUsage.items.map((item) => (
+              <div key={`${item.label}-${item.path}`} className="storage-usage-row">
+                <div>
+                  <strong>{item.label}</strong>
+                  <span title={item.path}>{item.path}</span>
+                  {item.error && <em>{item.error}</em>}
+                </div>
+                <div>
+                  <strong>{formatBytes(item.bytes)}</strong>
+                  <span>{item.files} files</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-small">Storage usage has not been loaded yet.</p>
+        )}
+        <div className="hero-actions">
+          <GhostButton disabled={storageUsageLoading} onClick={() => void refreshStorageUsage()}>
+            {storageUsageLoading ? "Checking…" : "Refresh storage usage"}
+          </GhostButton>
+        </div>
+      </Panel>
+      <Panel className="settings-section-panel">
         <div className="panel-title-row">
           <div>
             <div className="eyebrow">Token</div>
@@ -6076,41 +7452,98 @@ function SettingsPanel({
           </div>
           <span
             className={
-              tokenConfigured
-                ? "status-pill status-good"
-                : "status-pill status-neutral"
+              tokenHasChanges
+                ? "status-pill status-warn"
+                : tokenConfigured
+                  ? "status-pill status-good"
+                  : "status-pill status-neutral"
             }
           >
-            {tokenConfigured ? "configured" : "not set"}
+            {tokenHasChanges ? "unsaved" : tokenConfigured ? "configured" : "not set"}
           </span>
         </div>
-        {tokenConfigured ? (
-          <div className="token-locked-state">
-            <p className="empty-small">
-              A server token is stored for this client. It remains the
-              break-glass admin path even if a user certificate is revoked.
-            </p>
-            <Field type="password" value="••••••••••••••••" disabled readOnly />
+        <div className="token-locked-state">
+          <p className="empty-small">
+            Save an admin/server token to unlock the Admin area on this client.
+            The token is stored in the selected MCDF Manager config and mirrored
+            locally so the Admin pane appears immediately after a successful save.
+          </p>
+          <div className="form-grid single-column">
+            <Field
+              type="password"
+              value={adminToken}
+              onChange={(e) => {
+                setAdminToken(e.target.value);
+                setTokenMessage(null);
+                setTokenError(null);
+              }}
+              placeholder={tokenConfigured ? "Paste replacement token" : "Server token"}
+            />
           </div>
-        ) : (
-          <>
-            <div className="form-grid single-column">
-              <Field
-                type="password"
-                value={adminToken}
-                onChange={(e) => setAdminToken(e.target.value)}
-                placeholder="Server token"
-              />
-            </div>
-            <div className="hero-actions">
-              <GhostButton onClick={() => void saveAdminToken(adminToken)}>
-                Save token
+          <div className="hero-actions">
+            <GhostButton
+              disabled={tokenSaving || (!adminToken.trim() && !savedAdminToken.trim()) || (!tokenHasChanges && tokenConfigured)}
+              onClick={() => void saveSettingsAdminToken()}
+            >
+              {tokenSaving ? "Saving…" : tokenConfigured ? "Save token changes" : "Save token"}
+            </GhostButton>
+            {tokenConfigured && (
+              <GhostButton disabled={tokenSaving} onClick={() => void clearSettingsAdminToken()}>
+                Clear token
               </GhostButton>
-            </div>
-          </>
-        )}
+            )}
+          </div>
+          {tokenMessage && <SuccessBox>{tokenMessage}</SuccessBox>}
+          <ErrorBox error={tokenError} />
+        </div>
       </Panel>
-      <Panel>
+
+      <Panel className="settings-section-panel">
+        <div className="panel-title-row compact-setting-title">
+          <div>
+            <div className="eyebrow">Exchange lists</div>
+            <h2>Favorites and follows</h2>
+          </div>
+          <span className="status-pill status-neutral">
+            {settingsFavoriteHashes.length + settingsCreatorSubscriptions.length + settingsPackageSubscriptions.length} saved
+          </span>
+        </div>
+        <p className="empty-small">
+          Favorites and followed creators are stored locally. Favorites make entries easy to find later. Following a creator or adding an Exchange entry to My Library tracks it locally without downloading the MCDF until you choose Download.
+        </p>
+        <div className="settings-list-summary">
+          <div>
+            <strong>{settingsFavoriteHashes.length}</strong>
+            <span>favorite entries</span>
+          </div>
+          <div>
+            <strong>{settingsCreatorSubscriptions.length}</strong>
+            <span>followed creators</span>
+          </div>
+          <div>
+            <strong>{settingsPackageSubscriptions.length}</strong>
+            <span>tracked Exchange entries</span>
+          </div>
+        </div>
+        <div className="settings-list-chips">
+          {settingsCreatorSubscriptions.slice(0, 12).map((creator) => (
+            <span key={`creator-${creator}`}>creator: {creator}</span>
+          ))}
+          {settingsFavoriteHashes.slice(0, 12).map((hash) => (
+            <span key={`fav-${hash}`}>favorite: {shortHash(hash)}</span>
+          ))}
+          {settingsPackageSubscriptions.slice(0, 12).map((hash) => (
+            <span key={`sub-${hash}`}>entry: {shortHash(hash)}</span>
+          ))}
+        </div>
+        <div className="hero-actions">
+          <GhostButton onClick={refreshExchangeLists}>Refresh lists</GhostButton>
+          <GhostButton disabled={settingsFavoriteHashes.length === 0} onClick={clearExchangeFavorites}>Clear favorites</GhostButton>
+          <GhostButton disabled={settingsCreatorSubscriptions.length === 0} onClick={clearCreatorSubscriptions}>Unfollow creators</GhostButton>
+          <GhostButton disabled={settingsPackageSubscriptions.length === 0} onClick={clearPackageSubscriptions}>Clear tracked entries</GhostButton>
+        </div>
+      </Panel>
+      <Panel className="settings-section-panel">
         <div className="panel-title-row compact-setting-title">
           <div>
             <div className="eyebrow">Browsing visibility</div>
@@ -6165,7 +7598,7 @@ function SettingsPanel({
           <option value="iso">ISO yyyy-mm-dd</option>
         </select>
       </Panel>
-      <Panel>
+      <Panel className="settings-section-panel">
         <div className="panel-title-row">
           <div>
             <div className="eyebrow">Legal</div>
@@ -6232,10 +7665,12 @@ function tagsFromText(text: string): string[] {
 
 function PreviewTile({
   image,
+  crop,
   title,
   adult,
 }: {
   image?: string | null;
+  crop?: PreviewCrop | null;
   title: string;
   adult?: boolean;
 }) {
@@ -6245,7 +7680,12 @@ function PreviewTile({
   return (
     <div className={`preview-tile ${safeImage ? "has-image" : "no-image"}`}>
       {safeImage ? (
-        <img src={safeImage} alt={title} onError={() => setImageFailed(true)} />
+        <img
+          src={safeImage}
+          alt={title}
+          style={previewImageStyle(crop)}
+          onError={() => setImageFailed(true)}
+        />
       ) : (
         <div className="preview-placeholder">✧</div>
       )}
@@ -6261,7 +7701,7 @@ function SystemAdminPanel({
 }) {
   const [adminToken, setAdminToken] = useState(storedAdminToken());
   const [publicIndexUrl] = useState(
-    "https://raw.githubusercontent.com/obscure-crescent/moon-sparkles/main/public/indexes/latest.json",
+    PUBLIC_INDEX_LATEST_URL,
   );
   const [publicIndex, setPublicIndex] = useState<PublicIndexLatest | null>(
     null,
@@ -6289,8 +7729,13 @@ function SystemAdminPanel({
   const [blockReason, setBlockReason] = useState(
     "Rights holder or moderation policy block",
   );
+  const [transferPackageHash, setTransferPackageHash] = useState("");
+  const [transferOwnerId, setTransferOwnerId] = useState("");
+  const [transferOwnerName, setTransferOwnerName] = useState("");
+  const [transferReason, setTransferReason] = useState("Owner correction from Admin panel");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [adminActionMessage, setAdminActionMessage] = useState<string | null>(null);
   const [usersFilter, setUsersFilter] = useState("");
   const [eventsFilter, setEventsFilter] = useState("");
   const [packagesFilter, setPackagesFilter] = useState("");
@@ -6591,6 +8036,35 @@ function SystemAdminPanel({
     }
   };
 
+  const transferPackageOwner = async () => {
+    if (!transferPackageHash.trim() || !transferOwnerId.trim()) {
+      setError("Enter a package hash and a new owner public id first.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await invoke<unknown>("transfer_exchange_entry_owner", {
+        serverUrl: configuredArchiveHost(),
+        bearerToken: archiveActionToken(),
+        packageHashBlake3: transferPackageHash.trim(),
+        newOwnerPublicId: transferOwnerId.trim(),
+        newOwnerDisplayName: transferOwnerName.trim() || null,
+        reason: transferReason.trim() || null,
+      });
+      setAdminActionMessage("Owner transfer submitted. Reloading public index and admin state.");
+      setTransferPackageHash("");
+      setTransferOwnerId("");
+      setTransferOwnerName("");
+      await loadGithubEnvironment();
+      await loadServerAdminState();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const adminPageSize = 25;
   const allPackages = publicIndex?.packages || [];
   const filteredPackages = useMemo(() => {
@@ -6790,6 +8264,11 @@ function SystemAdminPanel({
               </button>
             </div>
             <ErrorBox error={error} />
+            {adminActionMessage && (
+              <SuccessBox>
+                <div className="font-semibold">{adminActionMessage}</div>
+              </SuccessBox>
+            )}
             <div className="admin-metric-grid">
               <div className="metric-card">
                 <span>Characters</span>
@@ -7243,6 +8722,59 @@ function SystemAdminPanel({
           <Panel>
             <div className="panel-title-row">
               <div>
+                <div className="eyebrow">Ownership</div>
+                <h2>Move an entry to another owner</h2>
+              </div>
+              <span className="status-pill status-neutral">admin</span>
+            </div>
+            <p>
+              Move a published MCDF entry to a different registered owner when a
+              migration, creator correction, or moderation action requires it.
+            </p>
+            <div className="form-grid two-columns">
+              <label>
+                <span>Package hash</span>
+                <Field
+                  value={transferPackageHash}
+                  onChange={(event) => setTransferPackageHash(event.target.value)}
+                  placeholder="Package BLAKE3 hash"
+                />
+              </label>
+              <label>
+                <span>New owner public id</span>
+                <Field
+                  value={transferOwnerId}
+                  onChange={(event) => setTransferOwnerId(event.target.value)}
+                  placeholder="publisher id / username"
+                />
+              </label>
+              <label>
+                <span>New owner display name</span>
+                <Field
+                  value={transferOwnerName}
+                  onChange={(event) => setTransferOwnerName(event.target.value)}
+                  placeholder="Display name shown in the Exchange"
+                />
+              </label>
+              <label>
+                <span>Reason</span>
+                <Field
+                  value={transferReason}
+                  onChange={(event) => setTransferReason(event.target.value)}
+                  placeholder="Admin note"
+                />
+              </label>
+            </div>
+            <div className="hero-actions">
+              <GhostButton disabled={loading || !adminToken.trim()} onClick={transferPackageOwner}>
+                Move owner
+              </GhostButton>
+            </div>
+          </Panel>
+
+          <Panel>
+            <div className="panel-title-row">
+              <div>
                 <div className="eyebrow">Characters</div>
                 <h2>Published entries</h2>
               </div>
@@ -7315,6 +8847,16 @@ function SystemAdminPanel({
                             }}
                           >
                             Prepare block
+                          </GhostButton>
+                          <GhostButton
+                            disabled={loading}
+                            onClick={() => {
+                              setTransferPackageHash(pkg.package_hash_blake3);
+                              setTransferOwnerId(pkg.owner_public_id || "");
+                              setTransferOwnerName(pkg.owner_display_name || "");
+                            }}
+                          >
+                            Move owner
                           </GhostButton>
                         </div>
                       </td>
@@ -7416,7 +8958,7 @@ function PublishedIndexPanel({
     () => readLibrarySettings(),
   );
   const [indexUrl] = useState(
-    "https://raw.githubusercontent.com/obscure-crescent/moon-sparkles/main/public/indexes/latest.json",
+    PUBLIC_INDEX_LATEST_URL,
   );
   const [exchangeFilter, setExchangeFilter] = useState<
     "all" | "favorites" | "recent" | "subscribed"
@@ -7438,6 +8980,10 @@ function PublishedIndexPanel({
   const [requestAccessResult, setRequestAccessResult] =
     useState<AccessRequestNotification | null>(null);
   const [reportResult, setReportResult] = useState<ReportRecord | null>(null);
+  const [ownerActionResult, setOwnerActionResult] =
+    useState<ExchangeOwnerMutationResponse | null>(null);
+  const [exchangeEditDraft, setExchangeEditDraft] =
+    useState<ExchangeEditDraft | null>(null);
   const [cacheInspection, setCacheInspection] =
     useState<ExchangePackageCacheInspection | null>(null);
   const [cacheActionResult, setCacheActionResult] =
@@ -7506,16 +9052,22 @@ function PublishedIndexPanel({
 
   const inspectPackage = async (pkg: PublicIndexPackageSummary) => {
     rememberRecent(pkg.package_hash_blake3);
+    setDetailsPaneOpen(true);
     setPackageLoading(true);
     setIndexError(null);
-    setSelectedPublicPackage(null);
+    setOwnerActionResult(null);
+    setRequestAccessResult(null);
+    setReportResult(null);
+    setDownloadResult(null);
+    setCacheInspection(null);
+    setCacheActionResult(null);
     try {
-      setSelectedPublicPackage(
-        await invoke<PublicPackageRecord>("fetch_public_package_record", {
-          indexUrl,
-          packageManifestPath: pkg.package_manifest_path,
-        }),
-      );
+      const packageRecord = await invoke<PublicPackageRecord>("fetch_public_package_record", {
+        indexUrl,
+        packageManifestPath: pkg.package_manifest_path,
+      });
+      setSelectedPublicPackage(packageRecord);
+      setDetailsPaneOpen(true);
     } catch (e) {
       setIndexError(String(e));
     } finally {
@@ -7727,6 +9279,213 @@ function PublishedIndexPanel({
     }
   };
 
+  const selectedPackageOwnerId = selectedPublicPackage
+    ? displayNameToUsername(
+        selectedPublicPackage.owner?.public_id ||
+          selectedPublicPackage.owner?.display_name ||
+          "",
+      )
+    : "";
+  const selectedPackageIsOwnedByCurrentPublisher =
+    Boolean(selectedPackageOwnerId) &&
+    selectedPackageOwnerId === storedPublisherPublicId();
+  const selectedPackageCanBeManaged =
+    Boolean(selectedPublicPackage) &&
+    (Boolean(storedAdminToken().trim()) ||
+      (hasStoredClientAuth() && selectedPackageIsOwnedByCurrentPublisher));
+
+  const applyOwnerMutationResult = (result: ExchangeOwnerMutationResponse) => {
+    if (result.removed) {
+      setPublicIndex((current) =>
+        current
+          ? {
+              ...current,
+              packages: current.packages.filter(
+                (pkg) => pkg.package_hash_blake3 !== result.package_hash_blake3,
+              ),
+              package_count: Math.max(0, current.package_count - 1),
+            }
+          : current,
+      );
+      setSelectedPublicPackage(null);
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    setPublicIndex((current) =>
+      current
+        ? {
+            ...current,
+            packages: current.packages.map((pkg) =>
+              pkg.package_hash_blake3 === result.package_hash_blake3
+                ? {
+                    ...pkg,
+                    title: result.title,
+                    description: result.description,
+                    tags: result.tags,
+                    is_adult: result.is_adult,
+                    visibility: result.visibility,
+                    owner_display_name: result.owner_display_name,
+                    owner_public_id: result.owner_public_id,
+                    preview_image_path:
+                      result.preview_image_path ?? pkg.preview_image_path,
+                    updated_at: updatedAt,
+                  }
+                : pkg,
+            ),
+          }
+        : current,
+    );
+    setSelectedPublicPackage((current) =>
+      current && current.package_hash_blake3 === result.package_hash_blake3
+        ? {
+            ...current,
+            title: result.title,
+            description: result.description,
+            tags: result.tags,
+            is_adult: result.is_adult,
+            visibility: result.visibility,
+            preview_image_path:
+              result.preview_image_path ?? current.preview_image_path,
+            owner: {
+              ...current.owner,
+              public_id: result.owner_public_id,
+              display_name: result.owner_display_name,
+            },
+          }
+        : current,
+    );
+  };
+
+  const openExchangeEditModal = () => {
+    if (!selectedPublicPackage) return;
+    if (!sharedArchiveConnected) {
+      setIndexError("Connect to the archive server before editing this entry.");
+      return;
+    }
+    setIndexError(null);
+    setOwnerActionResult(null);
+    setExchangeEditDraft({
+      title: selectedPublicPackage.title || selectedPublicPackage.original_filename || "",
+      description: selectedPublicPackage.description || "",
+      tags: exchangePackageTags(selectedPublicPackage).join(", "),
+      visibility: selectedPublicPackage.visibility || "public",
+      isAdult: packageIsAdult(selectedPublicPackage),
+      previewImagePath: "",
+      previewImageName: "",
+    });
+  };
+
+  const chooseExchangeEditPreviewImage = async () => {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [
+        { name: "Preview image", extensions: ["png", "jpg", "jpeg", "webp", "gif"] },
+      ],
+    });
+    if (!selected || Array.isArray(selected)) return;
+    const name = selected.split(/[\\/]/).pop() || "New preview image";
+    setExchangeEditDraft((current) =>
+      current
+        ? { ...current, previewImagePath: selected, previewImageName: name }
+        : current,
+    );
+  };
+
+  const saveExchangeEditModal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedPublicPackage || !exchangeEditDraft) return;
+    if (!sharedArchiveConnected) {
+      setIndexError("Connect to the archive server before editing this entry.");
+      return;
+    }
+    const title = exchangeEditDraft.title.trim();
+    if (!title) {
+      setIndexError("Give the Exchange listing a title before saving.");
+      return;
+    }
+    const visibility = exchangeEditDraft.visibility.trim() || "public";
+    if (!["public", "locked", "private"].includes(visibility)) {
+      setIndexError("Visibility must be public, locked, or private.");
+      return;
+    }
+    const publisherAuth = localPublisherAuthHeaders();
+    setPackageLoading(true);
+    setIndexError(null);
+    setOwnerActionResult(null);
+    try {
+      const result = await invoke<ExchangeOwnerMutationResponse>(
+        "edit_exchange_entry",
+        {
+          serverUrl: configuredArchiveHost(),
+          bearerToken: storedAdminToken().trim() || null,
+          packageHashBlake3: selectedPublicPackage.package_hash_blake3,
+          title,
+          description: exchangeEditDraft.description,
+          tags: tagsFromText(exchangeEditDraft.tags),
+          isAdult: exchangeEditDraft.isAdult,
+          visibility,
+          previewImagePath: exchangeEditDraft.previewImagePath || null,
+          publisherId: publisherAuth.publisherId,
+          publisherDisplayName: publisherAuth.publisherDisplayName,
+          publisherPublicKey: publisherAuth.publisherPublicKey,
+          publisherCertificate: publisherAuth.publisherCertificate,
+        },
+      );
+      setOwnerActionResult(result);
+      applyOwnerMutationResult(result);
+      setExchangeEditDraft(null);
+      setDetailsPaneOpen(true);
+      await loadIndex();
+    } catch (e) {
+      setIndexError(String(e));
+      setDetailsPaneOpen(true);
+    } finally {
+      setPackageLoading(false);
+    }
+  };
+
+  const deleteSelectedPackageAsOwner = async () => {
+    if (!selectedPublicPackage) return;
+    if (!sharedArchiveConnected) {
+      setIndexError("Connect to the archive server before deleting this entry.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Delete ${selectedPublicPackage.title || selectedPublicPackage.original_filename} from The Eorzea Exchange? This removes it from the public index but keeps local subscribers' history markers.`,
+      )
+    )
+      return;
+    const reason = window.prompt("Optional delete reason", "Deleted by owner from MCDF Manager");
+    if (reason === null) return;
+    const publisherAuth = localPublisherAuthHeaders();
+    setPackageLoading(true);
+    setIndexError(null);
+    setOwnerActionResult(null);
+    try {
+      const result = await invoke<ExchangeOwnerMutationResponse>(
+        "delete_exchange_entry",
+        {
+          serverUrl: configuredArchiveHost(),
+          bearerToken: storedAdminToken().trim() || null,
+          packageHashBlake3: selectedPublicPackage.package_hash_blake3,
+          reason,
+          publisherId: publisherAuth.publisherId,
+          publisherDisplayName: publisherAuth.publisherDisplayName,
+          publisherPublicKey: publisherAuth.publisherPublicKey,
+          publisherCertificate: publisherAuth.publisherCertificate,
+        },
+      );
+      setOwnerActionResult(result);
+      applyOwnerMutationResult(result);
+      await loadIndex();
+    } catch (e) {
+      setIndexError(String(e));
+    } finally {
+      setPackageLoading(false);
+    }
+  };
+
   const saveExchangeSettings = (patch: Partial<LocalLibrarySettings>) => {
     const next = { ...librarySettings, ...patch };
     setLibrarySettings(next);
@@ -7793,7 +9552,7 @@ function PublishedIndexPanel({
   const closeExchangeDetailsWhenClickingOutside = (
     event: MouseEvent<HTMLDivElement>,
   ) => {
-    if (!detailsPaneOpen) return;
+    if (!detailsPaneOpen || packageLoading || exchangeEditDraft) return;
     const target = event.target as HTMLElement;
     if (
       target.closest(".elevated-detail-pane") ||
@@ -7855,7 +9614,7 @@ function PublishedIndexPanel({
               <option value="all">All</option>
               <option value="favorites">★ Favorites</option>
               <option value="recent">Recently viewed</option>
-              <option value="subscribed">Subscribed creators</option>
+              <option value="subscribed">Followed / tracked</option>
             </select>
             <select
               value={creatorFilter}
@@ -7888,9 +9647,7 @@ function PublishedIndexPanel({
               <div className="eyebrow">Creator</div>
               <h2>{selectedCreator[1]}</h2>
               <p>
-                {creatorPackages.length} public entries. Subscriptions are
-                stored locally and synced for registered profiles when profile
-                sync is enabled.
+                {creatorPackages.length} public entries. Following is stored locally so this creator's Exchange entries are easy to review in My Library.
               </p>
               {creatorTagShelf.length > 0 && (
                 <div className="tag-row compact-tags">
@@ -7911,8 +9668,8 @@ function PublishedIndexPanel({
                 onClick={() => toggleCreatorSubscription(selectedCreator[0])}
               >
                 {creatorSubscriptions.includes(selectedCreator[0])
-                  ? "Subscribed"
-                  : "Subscribe"}
+                  ? "Following"
+                  : "Follow"}
               </GhostButton>
               <GhostButton
                 className="flat-action"
@@ -7926,7 +9683,7 @@ function PublishedIndexPanel({
         {exchangeFilter === "subscribed" && unseenSubscribedCount > 0 && (
           <div className="exchange-inline-section subscription-line">
             <strong>
-              {unseenSubscribedCount} subscribed Exchange entries not recently
+              {unseenSubscribedCount} followed or tracked Exchange entries not recently
               viewed
             </strong>
             <span>Open Details on an entry to mark it as recently viewed.</span>
@@ -7970,7 +9727,6 @@ function PublishedIndexPanel({
                   <span>Size</span>
                   <span>Updated</span>
                   <span>Favorite</span>
-                  <span>Labels</span>
                   <span>Actions</span>
                 </div>
                 {visiblePackages.map((pkg) => {
@@ -7979,12 +9735,6 @@ function PublishedIndexPanel({
                     pkg.package_hash_blake3,
                   );
                   const isSubscribed = creatorSubscriptions.includes(creatorId);
-                  const labelText =
-                    exchangePackageTags(pkg)
-                      .slice(0, 2)
-                      .map((tag) => `#${tag}`)
-                      .concat(exchangePackageLabels(pkg).slice(0, 3))
-                      .join(" · ") || "—";
                   return (
                     <div
                       key={pkg.package_hash_blake3}
@@ -8026,7 +9776,6 @@ function PublishedIndexPanel({
                       >
                         {isFavorite ? "★" : "—"}
                       </span>
-                      <span className="table-tags">{labelText}</span>
                       <span className="exchange-table-actions">
                         <button
                           type="button"
@@ -8046,13 +9795,13 @@ function PublishedIndexPanel({
                           className={`exchange-icon-action ${isSubscribed ? "active" : ""}`}
                           title={
                             isSubscribed
-                              ? "Unsubscribe from creator"
-                              : "Subscribe to creator locally"
+                              ? "Unfollow creator"
+                              : "Follow creator locally"
                           }
                           aria-label={
                             isSubscribed
-                              ? "Unsubscribe from creator"
-                              : "Subscribe to creator"
+                              ? "Unfollow creator"
+                              : "Follow creator"
                           }
                           onClick={() => toggleCreatorSubscription(creatorId)}
                         >
@@ -8111,18 +9860,15 @@ function PublishedIndexPanel({
                           {pkg.file_count} files ·{" "}
                           {formatBytes(pkg.total_file_bytes)}
                         </span>
-                        <div className="tag-row compact-tags label-row">
-                          {exchangePackageTags(pkg)
-                            .slice(0, 3)
-                            .map((tag) => (
-                              <span key={`tag-${tag}`}>#{tag}</span>
-                            ))}
-                          {exchangePackageLabels(pkg)
-                            .slice(0, 4)
-                            .map((label) => (
-                              <span key={`label-${label}`}>{label}</span>
-                            ))}
-                        </div>
+                        {exchangePackageTags(pkg).length > 0 && (
+                          <div className="tag-row compact-tags">
+                            {exchangePackageTags(pkg)
+                              .slice(0, 3)
+                              .map((tag) => (
+                                <span key={`tag-${tag}`}>#{tag}</span>
+                              ))}
+                          </div>
+                        )}
                       </button>
                       <div className="state-pill-stack exchange-card-pills">
                         <span className="status-pill status-neutral">
@@ -8162,13 +9908,13 @@ function PublishedIndexPanel({
                           className={`exchange-icon-action ${isSubscribed ? "active" : ""}`}
                           title={
                             isSubscribed
-                              ? "Unsubscribe from creator"
-                              : "Subscribe to creator locally"
+                              ? "Unfollow creator"
+                              : "Follow creator locally"
                           }
                           aria-label={
                             isSubscribed
-                              ? "Unsubscribe from creator"
-                              : "Subscribe to creator"
+                              ? "Unfollow creator"
+                              : "Follow creator"
                           }
                           onClick={() => toggleCreatorSubscription(creatorId)}
                         >
@@ -8196,6 +9942,179 @@ function PublishedIndexPanel({
           </div>
         )}
       </div>
+      {selectedPublicPackage && exchangeEditDraft && (
+        <div
+          className="modal-backdrop exchange-edit-backdrop"
+          onMouseDown={() => !packageLoading && setExchangeEditDraft(null)}
+        >
+          <form
+            className="modal-card exchange-edit-modal exchange-listing-studio"
+            onSubmit={saveExchangeEditModal}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="exchange-edit-hero">
+              <div>
+                <div className="eyebrow">Creator listing studio</div>
+                <h2>Make this Exchange entry shine</h2>
+                <p>
+                  Tune the cover, title, tags, and visibility people see while
+                  browsing The Eorzea Exchange. Package content changes still
+                  need a delete and republish so downloads stay trustworthy.
+                </p>
+              </div>
+              <IconButton
+                label="Close edit listing"
+                className="detail-close-button exchange-edit-close"
+                disabled={packageLoading}
+                onClick={() => setExchangeEditDraft(null)}
+              >
+                ×
+              </IconButton>
+            </div>
+            {indexError && <ErrorBox error={indexError} />}
+            <div className="exchange-edit-layout">
+              <section className="exchange-cover-card">
+                <span className="eyebrow">Cover image</span>
+                <div className="exchange-cover-preview">
+                  {exchangeEditDraft.previewImagePath ||
+                  selectedPublicPackage.preview_image_path ? (
+                    <img
+                      src={
+                        exchangeEditDraft.previewImagePath
+                          ? displayImageSrc(exchangeEditDraft.previewImagePath) || undefined
+                          : publicIndexAssetUrl(
+                              indexUrl,
+                              selectedPublicPackage.preview_image_path || "",
+                            ) || undefined
+                      }
+                      alt="Exchange listing cover preview"
+                    />
+                  ) : (
+                    <div className="exchange-cover-placeholder">
+                      <strong>No cover yet</strong>
+                      <span>Add a preview so the entry feels like a character, not a file.</span>
+                    </div>
+                  )}
+                </div>
+                <div className="exchange-cover-copy">
+                  <strong>First impression matters.</strong>
+                  <span>Use a PNG, JPG, WEBP, or GIF below 5 MiB.</span>
+                  {exchangeEditDraft.previewImageName && (
+                    <code>{exchangeEditDraft.previewImageName}</code>
+                  )}
+                </div>
+                <GhostButton
+                  type="button"
+                  disabled={packageLoading}
+                  onClick={chooseExchangeEditPreviewImage}
+                >
+                  Replace cover image
+                </GhostButton>
+              </section>
+              <section className="exchange-edit-fields">
+                <label className="field-label feature-field">
+                  <span>Listing title</span>
+                  <Field
+                    value={exchangeEditDraft.title}
+                    onChange={(event) =>
+                      setExchangeEditDraft((current) =>
+                        current ? { ...current, title: event.target.value } : current,
+                      )
+                    }
+                    placeholder="Give the character a memorable name"
+                    autoFocus
+                  />
+                </label>
+                <label className="field-label feature-field">
+                  <span>Story / description</span>
+                  <textarea
+                    className="field textarea-field"
+                    value={exchangeEditDraft.description}
+                    onChange={(event) =>
+                      setExchangeEditDraft((current) =>
+                        current
+                          ? { ...current, description: event.target.value }
+                          : current,
+                      )
+                    }
+                    rows={6}
+                    placeholder="Tell people what makes this look special, what style it fits, and anything they should know before downloading."
+                  />
+                </label>
+                <label className="field-label feature-field">
+                  <span>Tags</span>
+                  <Field
+                    value={exchangeEditDraft.tags}
+                    onChange={(event) =>
+                      setExchangeEditDraft((current) =>
+                        current ? { ...current, tags: event.target.value } : current,
+                      )
+                    }
+                    placeholder="fantasy, event, pose, texture"
+                  />
+                </label>
+                <div className="exchange-edit-grid">
+                  <label className="field-label feature-field">
+                    <span>Visibility</span>
+                    <select
+                      className="field"
+                      value={exchangeEditDraft.visibility}
+                      onChange={(event) =>
+                        setExchangeEditDraft((current) =>
+                          current
+                            ? { ...current, visibility: event.target.value }
+                            : current,
+                        )
+                      }
+                    >
+                      <option value="public">Public — visible and downloadable</option>
+                      <option value="locked">Locked — visible, access required</option>
+                      <option value="private">Private — hidden from normal browsing</option>
+                    </select>
+                  </label>
+                  <label className="toggle-line exchange-adult-toggle">
+                    <input
+                      type="checkbox"
+                      checked={exchangeEditDraft.isAdult}
+                      onChange={(event) =>
+                        setExchangeEditDraft((current) =>
+                          current
+                            ? { ...current, isAdult: event.target.checked }
+                            : current,
+                        )
+                      }
+                    />
+                    <span>18+ / adult content</span>
+                  </label>
+                </div>
+                <div className="exchange-edit-warning">
+                  <strong>Need to fix the actual package?</strong>
+                  <span>Delete this Exchange listing and publish again from the corrected local entry.</span>
+                </div>
+              </section>
+            </div>
+            <div className="modal-actions exchange-edit-actions">
+              <GhostButton
+                type="button"
+                disabled={packageLoading}
+                onClick={() => setExchangeEditDraft(null)}
+              >
+                Cancel
+              </GhostButton>
+              <GhostButton
+                type="button"
+                disabled={packageLoading}
+                onClick={deleteSelectedPackageAsOwner}
+              >
+                Delete and republish
+              </GhostButton>
+              <PrimaryButton type="submit" disabled={packageLoading}>
+                {packageLoading ? "Saving…" : "Save listing"}
+              </PrimaryButton>
+            </div>
+          </form>
+        </div>
+      )}
       {selectedPublicPackage && detailsPaneOpen && (
         <aside className="right-stack elevated-detail-pane exchange-detail-pane">
           <Panel>
@@ -8294,18 +10213,6 @@ function PublishedIndexPanel({
                   </div>
                 </div>
               )}
-              {exchangePackageLabels(selectedPublicPackage).length > 0 && (
-                <div className="tag-group">
-                  <span className="tag-group-title">Package labels</span>
-                  <div className="tag-row label-row">
-                    {exchangePackageLabels(selectedPublicPackage).map(
-                      (label) => (
-                        <span key={label}>{label}</span>
-                      ),
-                    )}
-                  </div>
-                </div>
-              )}
               <div className="exchange-entry-controls">
                 <PrimaryButton
                   disabled={
@@ -8365,8 +10272,8 @@ function PublishedIndexPanel({
                   {creatorSubscriptions.includes(
                     creatorKeyFromPackage(selectedPublicPackage),
                   )
-                    ? "Creator subscribed"
-                    : "Subscribe creator"}
+                    ? "Creator followed"
+                    : "Follow creator"}
                 </GhostButton>
                 <GhostButton
                   onClick={() =>
@@ -8379,6 +10286,32 @@ function PublishedIndexPanel({
                     ? "★ Favorite"
                     : "☆ Favorite"}
                 </GhostButton>
+                {selectedPackageCanBeManaged && (
+                  <>
+                    <GhostButton
+                      disabled={!sharedArchiveConnected || packageLoading}
+                      title={
+                        selectedPackageIsOwnedByCurrentPublisher
+                          ? "Edit your published Exchange title, description, tags, 18+ flag, and visibility."
+                          : "Admin edit for this Exchange entry."
+                      }
+                      onClick={openExchangeEditModal}
+                    >
+                      Edit listing
+                    </GhostButton>
+                    <GhostButton
+                      disabled={!sharedArchiveConnected || packageLoading}
+                      title={
+                        selectedPackageIsOwnedByCurrentPublisher
+                          ? "Delete your published listing from The Eorzea Exchange."
+                          : "Admin delete for this Exchange entry."
+                      }
+                      onClick={deleteSelectedPackageAsOwner}
+                    >
+                      Delete listing
+                    </GhostButton>
+                  </>
+                )}
                 <GhostButton
                   disabled={!sharedArchiveConnected || packageLoading}
                   title={
@@ -8434,6 +10367,20 @@ function PublishedIndexPanel({
                   </div>
                 </SuccessBox>
               )}
+              {ownerActionResult && (
+                <SuccessBox>
+                  <div className="font-semibold">
+                    {ownerActionResult.removed
+                      ? "Exchange listing deleted"
+                      : "Exchange listing updated"}
+                  </div>
+                  <div className="mt-2">
+                    {ownerActionResult.index_pushed
+                      ? "The public index was updated and pushed."
+                      : "The server accepted the change; public index push may still need server sync."}
+                  </div>
+                </SuccessBox>
+              )}
               {downloadResult && (
                 <SuccessBox>
                   <div>Downloaded rebuilt MCDF to:</div>
@@ -8479,29 +10426,6 @@ function PublishedIndexPanel({
                   {selectedPublicPackage.package_hash_blake3}
                 </div>
               </details>
-              <div className="component-grid mt-2">
-                {selectedPublicPackage.files.slice(0, 8).map((file, index) => (
-                  <div
-                    key={`${file.payload_blake3 ?? index}`}
-                    className="component-card"
-                  >
-                    <div className="component-icon">
-                      {(file.component_kind || "?").slice(0, 1).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="component-name">
-                        {file.display_name ||
-                          file.game_paths?.[0] ||
-                          "component"}
-                      </div>
-                      <div className="component-meta">
-                        {file.component_kind || "component"} ·{" "}
-                        {formatBytes(file.length)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           </Panel>
         </aside>
@@ -8719,6 +10643,11 @@ function WindowControls() {
 function App() {
   const [clientAuthReady, setClientAuthReady] = useState(hasStoredClientAuth);
   const [sharedArchiveConnected, setSharedArchiveConnected] = useState(false);
+  const [connectivityStatus, setConnectivityStatus] = useState<ConnectivityStatus>({
+    state: "checking",
+    label: "Checking",
+    detail: "Checking the registry and public Exchange index.",
+  });
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [globalAddEntryOpen, setGlobalAddEntryOpen] = useState(false);
@@ -8783,6 +10712,82 @@ function App() {
       cancelled = true;
     };
   }, [clientAuthReady]);
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkConnectivity = async () => {
+      let registryOk = false;
+      let indexOk = false;
+      let registryDetail = "Registry server could not be reached.";
+      let indexDetail = "Public Exchange index could not be reached.";
+      let syncDetail = "";
+
+      try {
+        const health = await invoke<CentralServerHealth>("central_server_health", {
+          serverUrl: configuredArchiveHost(),
+        });
+        registryOk = true;
+        registryDetail = `Registry ${health.server_version || health.status || "online"}`;
+        if (health.public_index_sync_ready === false) {
+          syncDetail = "Registry is online, but public index sync is not ready.";
+        }
+      } catch (error) {
+        registryDetail = `Registry offline: ${String(error)}`;
+      }
+
+      try {
+        await invoke<PublicIndexLatest>("fetch_public_marketplace_index", {
+          indexUrl: PUBLIC_INDEX_LATEST_URL,
+        });
+        indexOk = true;
+        indexDetail = "Public Exchange index is reachable.";
+      } catch (error) {
+        indexDetail = `Public Exchange index offline: ${String(error)}`;
+      }
+
+      if (cancelled) return;
+      const checkedAt = new Date().toISOString();
+      if (registryOk && indexOk && !syncDetail) {
+        setConnectivityStatus({
+          state: "online",
+          label: "Online",
+          detail: "Registry and public Exchange index are reachable.",
+          checkedAt,
+        });
+      } else if (!registryOk && !indexOk) {
+        setConnectivityStatus({
+          state: "offline",
+          label: "Offline",
+          detail:
+            "Registry and public Exchange index are unreachable. Local library, Analyze, and cached entries still work. " +
+            registryDetail +
+            " " +
+            indexDetail,
+          checkedAt,
+        });
+      } else {
+        setConnectivityStatus({
+          state: "degraded",
+          label: registryOk ? "Index offline" : "Registry offline",
+          detail:
+            `${registryDetail} ${indexDetail}${syncDetail ? ` ${syncDetail}` : ""} Local library and Analyze remain available.`,
+          checkedAt,
+        });
+      }
+    };
+
+    checkConnectivity();
+    const timer = window.setInterval(checkConnectivity, 45000);
+    window.addEventListener("online", checkConnectivity);
+    window.addEventListener("offline", checkConnectivity);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("online", checkConnectivity);
+      window.removeEventListener("offline", checkConnectivity);
+    };
+  }, []);
+
   const refreshAccessRequests = async () => {
     if (!sharedArchiveConnected) {
       setAccessRequests(readAccessNotifications());
@@ -8855,6 +10860,19 @@ function App() {
       ),
     );
   };
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setOperations((current) =>
+        current.filter((op) => {
+          if (op.status === "running") return true;
+          const age = now - (op.endedAt || op.startedAt);
+          return age < (op.status === "failed" ? 2 * 60_000 : 12_000);
+        }),
+      );
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const panelProps = useMemo(
     () => ({ addOperation, updateOperation, finishOperation }),
     [],
@@ -8997,10 +11015,16 @@ function App() {
           <button
             className="identity-mini-text identity-open-button"
             type="button"
-            onClick={() => setProfileModalOpen(true)}
-            title="Open public profile"
+            onClick={() =>
+              clientAuthReady ? setProfileModalOpen(true) : openConnectModal()
+            }
+            title={
+              clientAuthReady
+                ? "Open server profile"
+                : "Register or import a publisher identity"
+            }
           >
-            <strong>{storedPublisherDisplayName()}</strong>
+            <strong>{clientAuthReady ? storedPublisherDisplayName() : "Register"}</strong>
             {storedPublisherPermissions(
               sharedArchiveConnected,
               clientAuthReady,
@@ -9056,6 +11080,7 @@ function App() {
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
           >
+            <ConnectivityBadge status={connectivityStatus} />
             <IconButton label="Add MCDF entry" onClick={openAddEntryModal}>
               ＋
             </IconButton>

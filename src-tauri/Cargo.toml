@@ -1,14 +1,14 @@
 [package]
-name = "mcdf-marketplace"
+name = "mcdf-manager"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "mcdf_marketplace_lib"
+name = "mcdf_manager_lib"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "mcdf-marketplace"
+name = "mcdf-manager"
 path = "src/main.rs"
 
 
