@@ -299,7 +299,7 @@ fn storage_usage_item(label: &str, path: String) -> StorageUsageItem {
 #[command]
 pub fn get_storage_usage() -> Result<StorageUsageResponse, String> {
     let settings = local_cache::storage_settings()?;
-    let mut items = vec![
+    let items = vec![
         storage_usage_item("App home", settings.app_home_dir),
         storage_usage_item("My Library", settings.library_dir),
         storage_usage_item("Exchange cache", settings.exchange_cache_dir),
@@ -2131,7 +2131,6 @@ pub fn upload_mcdf_to_central_server(
     preview_image_path: Option<String>,
     is_adult: Option<bool>,
     visibility: Option<String>,
-    preview_image_path: Option<String>,
     publisher_id: Option<String>,
     publisher_display_name: Option<String>,
     publisher_public_key: Option<String>,

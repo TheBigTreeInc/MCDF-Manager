@@ -1,5 +1,12 @@
 # Changelog
 
+## fix165-rust-upload-parameter-build
+
+### Fixed
+- Removed the duplicated `preview_image_path` Rust command parameter in `upload_mcdf_to_central_server`.
+- This fixes the GitHub Actions Rust compile failure `E0415: identifier preview_image_path is bound more than once`.
+- Cleaned up the adjacent unnecessary mutable binding warning in the same Rust command module.
+
 ## fix164-tauri-asset-protocol-build
 
 ### Fixed
