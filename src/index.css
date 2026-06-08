@@ -4778,6 +4778,8 @@ body { min-width: 0; }
 /* fix181: Add MCDF modal uses a clear local-left / online-right import layout. */
 .add-entry-modal {
   width: min(960px, calc(100vw - 72px));
+  position: relative;
+  overflow: hidden;
 }
 .add-entry-intake-grid {
   display: grid;
@@ -4997,4 +4999,193 @@ body { min-width: 0; }
 .detail-action-panel-compact .library-action-cluster {
   width: 100%;
   justify-content: flex-start;
+}
+
+/* fix203: required character-use consent form on publish metadata */
+.consent-form-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(216,141,255,.13);
+  border-radius: 14px;
+  background: rgba(255,255,255,.035);
+}
+.consent-form-panel select,
+.consent-form-panel input {
+  width: 100%;
+}
+.consent-form-panel .empty-small {
+  margin: 0;
+  line-height: 1.35;
+}
+
+/* fix204: theme consent selection replaces rating dropdown */
+.consent-form-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.consent-form-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.link-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: rgba(247, 214, 255, 0.92);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.consent-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+.consent-theme-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid rgba(216,141,255,.13);
+  border-radius: 10px;
+  background: rgba(12, 8, 22, .36);
+}
+.consent-theme-choice input {
+  width: auto;
+  margin-top: 2px;
+}
+.consent-theme-choice strong,
+.consent-theme-choice small {
+  display: block;
+}
+.consent-theme-choice small {
+  margin-top: 2px;
+  color: var(--muted);
+  line-height: 1.25;
+}
+
+/* fix206: Add MCDF keeps local insert visible and moves internet options behind an Import modal. */
+.online-import-panel-compact {
+  align-content: center;
+  justify-items: start;
+  min-height: 360px;
+}
+.online-import-panel-compact h3 {
+  margin: 0;
+}
+.import-source-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  border-radius: 28px;
+  background: rgba(4, 1, 14, .72);
+  backdrop-filter: blur(10px);
+}
+.import-source-modal {
+  width: min(760px, calc(100vw - 120px));
+  max-height: min(760px, calc(100vh - 120px));
+  overflow: auto;
+}
+.online-import-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 820px) {
+  .online-import-panel-compact { min-height: 220px; }
+  .import-source-modal { width: min(680px, calc(100vw - 48px)); }
+  .online-import-modal-grid { grid-template-columns: 1fr; }
+}
+
+/* fix206: consent is described as themes. */
+
+/* fix207: consent uses a compact table and detail drawers keep a single vertical scroller. */
+.consent-theme-grid,
+.consent-theme-choice {
+  display: none !important;
+}
+.consent-theme-table {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(216,141,255,.14);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(12, 8, 22, .30);
+}
+.consent-theme-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0;
+  border-bottom: 1px solid rgba(216,141,255,.10);
+  cursor: pointer;
+}
+.consent-theme-row:last-child { border-bottom: 0; }
+.consent-theme-row:hover { background: rgba(216,141,255,.08); }
+.consent-theme-check {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+.consent-theme-check input {
+  width: auto !important;
+  margin: 0;
+  accent-color: #d88dff;
+}
+.consent-theme-title {
+  min-width: 0;
+  padding: 8px 10px 8px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #fff7ff;
+}
+.exchange-consent-panel {
+  margin-top: 2px;
+}
+.library-flat .elevated-detail-pane {
+  overflow: hidden !important;
+  min-width: 0;
+  max-width: 100%;
+}
+.library-flat .elevated-detail-pane .glass-panel,
+.library-flat .elevated-detail-pane .entry-detail-card {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  min-width: 0;
+  max-width: 100%;
+  scrollbar-gutter: stable;
+}
+.library-flat .elevated-detail-pane *,
+.library-flat .elevated-detail-pane *::before,
+.library-flat .elevated-detail-pane *::after {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+.library-flat .elevated-detail-pane .hero-actions,
+.library-flat .elevated-detail-pane .tag-row,
+.library-flat .elevated-detail-pane .published-detail,
+.library-flat .elevated-detail-pane .entry-detail-table,
+.library-flat .elevated-detail-pane .source-annotation {
+  min-width: 0;
+  overflow-x: hidden;
+}
+.library-flat .elevated-detail-pane .field,
+.library-flat .elevated-detail-pane .textarea-field,
+.library-flat .elevated-detail-pane select {
+  min-width: 0;
+  width: 100%;
 }

@@ -328,6 +328,7 @@ type PublicIndexPackageSummary = {
   preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: string | null;
+  character_use_consent?: CharacterUseConsent | null;
   owner_display_name: string;
   owner_public_id: string;
   file_count: number;
@@ -417,6 +418,7 @@ type PublicPackageRecord = {
   preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: string | null;
+  character_use_consent?: CharacterUseConsent | null;
   owner: { display_name?: string; public_id?: string };
   parser_revision: number;
   parser_status: string;
@@ -617,6 +619,7 @@ type ExchangeEditDraft = {
   previewImagePath: string;
   previewImageName: string;
   previewCrop: PreviewCrop;
+  characterUseConsent: CharacterUseConsent;
 };
 
 type ExchangeOwnerMutationResponse = {
@@ -760,6 +763,24 @@ function storedAdminToken(): string {
   const kind = localStorage.getItem(ADMIN_TOKEN_KIND_KEY) || "";
   return token && kind === "admin" ? token : "";
 }
+function clearLocalAdminToken(): void {
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+  localStorage.removeItem(ADMIN_TOKEN_KIND_KEY);
+  window.dispatchEvent(new Event("mcdf-admin-token-changed"));
+}
+async function validateAdminToken(value: string): Promise<boolean> {
+  const token = value.trim();
+  if (!token) return false;
+  try {
+    await invoke<AdminServerSettings>("fetch_admin_server_settings", {
+      serverUrl: configuredArchiveHost(),
+      bearerToken: token,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 function storedUploadToken(): string {
   const explicitUploadToken = (localStorage.getItem(UPLOAD_TOKEN_KEY) || "").trim();
   if (explicitUploadToken) return explicitUploadToken;
@@ -773,7 +794,10 @@ function storedUploadToken(): string {
   return unclassifiedToken && kind !== "admin" ? unclassifiedToken : "";
 }
 function archiveActionToken(): string | null {
-  const token = (storedAdminToken() || storedUploadToken()).trim();
+  // Upload/publish flows should prefer the upload token. A stale or invalid
+  // admin token must not shadow a valid uploader token and make normal
+  // registry actions fail with 401. Admin-only panes still use storedAdminToken().
+  const token = (storedUploadToken() || storedAdminToken()).trim();
   return token || null;
 }
 async function loadAdminTokenFromConfig(): Promise<string> {
@@ -782,13 +806,27 @@ async function loadAdminTokenFromConfig(): Promise<string> {
       "get_storage_settings",
     );
     const token = (settings.admin_token || "").trim();
-    if (token && localStorage.getItem(ADMIN_TOKEN_KIND_KEY) === "admin") {
-      localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    const tokenMarkedAdmin = localStorage.getItem(ADMIN_TOKEN_KIND_KEY) === "admin";
+    const candidate = tokenMarkedAdmin ? token || storedAdminToken() : storedAdminToken();
+    if (candidate && await validateAdminToken(candidate)) {
+      localStorage.setItem(ADMIN_TOKEN_KEY, candidate);
+      localStorage.setItem(ADMIN_TOKEN_KIND_KEY, "admin");
       window.dispatchEvent(new Event("mcdf-admin-token-changed"));
+      return candidate;
     }
-    return storedAdminToken();
+    if (candidate) {
+      clearLocalAdminToken();
+      saveUploadToken(candidate);
+    }
+    return "";
   } catch {
-    return storedAdminToken();
+    const token = storedAdminToken();
+    if (token && await validateAdminToken(token)) return token;
+    if (token) {
+      clearLocalAdminToken();
+      saveUploadToken(token);
+    }
+    return "";
   }
 }
 async function saveAdminToken(value: string): Promise<void> {
@@ -1358,6 +1396,60 @@ type LocalMcdfStorageState =
   | "removed"
   | "failed";
 type McdfVisibility = "public" | "locked" | "private";
+type CharacterUseConsentThemeId =
+  | "comedy"
+  | "action"
+  | "adventure"
+  | "drama"
+  | "romance"
+  | "horror"
+  | "fantasy"
+  | "sci_fi"
+  | "thriller"
+  | "erotic"
+  | "slice_of_life"
+  | "dark_themes";
+type CharacterUseConsent = {
+  schema_version: number;
+  allowed_theme_ids: CharacterUseConsentThemeId[];
+  theme_labels: string[];
+  soft_enforcement: boolean;
+  /** Deprecated legacy rating fields. Kept only to read older entries safely. */
+  rating?: string | null;
+  rating_label?: string | null;
+};
+const CHARACTER_USE_CONSENT_THEMES: Array<{
+  id: CharacterUseConsentThemeId;
+  label: string;
+  description: string;
+}> = [
+  { id: "comedy", label: "Comedy", description: "Light-hearted, funny, or playful scenes." },
+  { id: "action", label: "Action", description: "Combat, stunts, chase scenes, and dynamic poses." },
+  { id: "adventure", label: "Adventure", description: "Exploration, quests, travel, and heroic moments." },
+  { id: "drama", label: "Drama", description: "Emotional, serious, or story-heavy scenes." },
+  { id: "romance", label: "Romance", description: "Affectionate, romantic, or couple-focused scenes." },
+  { id: "horror", label: "Horror", description: "Scary, unsettling, monster, or survival scenes." },
+  { id: "fantasy", label: "Fantasy", description: "Magic, myth, glamour, and high-fantasy scenes." },
+  { id: "sci_fi", label: "Sci-fi", description: "Futuristic, tech, cosmic, or cyber scenes." },
+  { id: "thriller", label: "Thriller", description: "Tense, mysterious, dangerous, or suspenseful scenes." },
+  { id: "erotic", label: "Erotic", description: "Sensual or erotic use is acceptable." },
+  { id: "slice_of_life", label: "Slice of life", description: "Casual, social, domestic, or everyday scenes." },
+  { id: "dark_themes", label: "Dark themes", description: "Villain, tragedy, occult, or morally dark scenes." },
+];
+const CHARACTER_USE_CONSENT_THEME_IDS = CHARACTER_USE_CONSENT_THEMES.map(
+  (theme) => theme.id,
+);
+const CHARACTER_USE_CONSENT_THEME_LABELS = Object.fromEntries(
+  CHARACTER_USE_CONSENT_THEMES.map((theme) => [theme.id, theme.label]),
+) as Record<CharacterUseConsentThemeId, string>;
+function defaultCharacterUseConsent(): CharacterUseConsent {
+  return {
+    schema_version: 2,
+    allowed_theme_ids: [...CHARACTER_USE_CONSENT_THEME_IDS],
+    theme_labels: CHARACTER_USE_CONSENT_THEMES.map((theme) => theme.label),
+    soft_enforcement: true,
+  };
+}
 type PreviewCrop = { x: number; y: number; scale: number };
 type BrowserDisplayMode = "list" | "cards";
 type AdultContentMode = "hide" | "show";
@@ -1381,6 +1473,7 @@ type LocalMcdfEntry = {
   preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: McdfVisibility;
+  character_use_consent?: CharacterUseConsent | null;
   package_hash_blake3?: string | null;
   file_count: number;
   total_file_bytes: number;
@@ -1407,6 +1500,7 @@ type McdfAddDraft = {
   previewCrop: PreviewCrop;
   isAdult: boolean;
   visibility: McdfVisibility;
+  characterUseConsent?: CharacterUseConsent;
   sourceType?: LocalMcdfSourceType;
   sourceUrl?: string | null;
   sourceLabel?: string | null;
@@ -1710,6 +1804,7 @@ type PackageSubscriptionSnapshot = {
   preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: McdfVisibility;
+  character_use_consent?: CharacterUseConsent | null;
   owner_public_id?: string | null;
   owner_display_name?: string | null;
   file_count: number;
@@ -1768,6 +1863,7 @@ function packageSnapshotFromIndex(
     preview_crop: normalizePreviewCropValue(pkg.preview_crop),
     is_adult: Boolean(pkg.is_adult),
     visibility: normalizeMcdfVisibilityValue(pkg.visibility),
+    character_use_consent: packageCharacterUseConsentValue(pkg),
     owner_public_id: nullableString(summary.owner_public_id || record.owner?.public_id),
     owner_display_name: nullableString(summary.owner_display_name || record.owner?.display_name),
     file_count: finiteNumber(pkg.file_count),
@@ -1798,6 +1894,7 @@ function normalizePackageSubscriptionSnapshot(
     preview_crop: normalizePreviewCropValue(snapshot.preview_crop),
     is_adult: Boolean(snapshot.is_adult),
     visibility: normalizeMcdfVisibilityValue(snapshot.visibility),
+    character_use_consent: normalizeCharacterUseConsentValue(snapshot.character_use_consent),
     owner_public_id: nullableString(snapshot.owner_public_id),
     owner_display_name: nullableString(snapshot.owner_display_name),
     file_count: finiteNumber(snapshot.file_count),
@@ -1911,6 +2008,63 @@ function normalizePreviewCropValue(value: unknown): PreviewCrop | null {
     scale: finiteNumber(crop.scale, 1),
   });
 }
+function normalizeConsentThemeIds(value: unknown): CharacterUseConsentThemeId[] {
+  const rawIds = Array.isArray(value) ? value : [];
+  const valid = new Set(CHARACTER_USE_CONSENT_THEME_IDS);
+  const ids = rawIds
+    .map((item) => String(item).trim().toLowerCase().replace(/[-\s]+/g, "_"))
+    .filter((item): item is CharacterUseConsentThemeId =>
+      valid.has(item as CharacterUseConsentThemeId),
+    );
+  return Array.from(new Set(ids));
+}
+function normalizeCharacterUseConsentValue(value: unknown): CharacterUseConsent {
+  if (!value || typeof value !== "object") return defaultCharacterUseConsent();
+  const raw = value as Partial<CharacterUseConsent> & {
+    allowed_theme_ids?: unknown;
+    themes?: unknown;
+    rating?: unknown;
+  };
+  const hasExplicitThemes = Object.prototype.hasOwnProperty.call(raw, "allowed_theme_ids") ||
+    Object.prototype.hasOwnProperty.call(raw, "themes");
+  let allowedThemeIds = normalizeConsentThemeIds(raw.allowed_theme_ids || raw.themes);
+  // Legacy rating-based consent did not name themes. Treat older entries as
+  // the new default: all themes allowed unless explicit theme ids exist.
+  if (!hasExplicitThemes && allowedThemeIds.length === 0) allowedThemeIds = [...CHARACTER_USE_CONSENT_THEME_IDS];
+  return {
+    schema_version: 2,
+    allowed_theme_ids: allowedThemeIds,
+    theme_labels: allowedThemeIds.map((id) => CHARACTER_USE_CONSENT_THEME_LABELS[id]),
+    soft_enforcement: true,
+  };
+}
+
+function packageCharacterUseConsentValue(value: unknown): CharacterUseConsent {
+  if (!value || typeof value !== "object") return defaultCharacterUseConsent();
+  return normalizeCharacterUseConsentValue(
+    (value as { character_use_consent?: unknown }).character_use_consent,
+  );
+}
+
+function consentSummary(consent: CharacterUseConsent | null | undefined): string {
+  const normalized = normalizeCharacterUseConsentValue(consent);
+  if (normalized.allowed_theme_ids.length === CHARACTER_USE_CONSENT_THEME_IDS.length) {
+    return "All themes";
+  }
+  if (normalized.allowed_theme_ids.length === 0) return "No themes selected";
+  const labels = normalized.theme_labels.slice(0, 3);
+  const remaining = normalized.theme_labels.length - labels.length;
+  return `${labels.join(", ")}${remaining > 0 ? ` +${remaining}` : ""}`;
+}
+function buildCharacterUseConsent(themeIds: CharacterUseConsentThemeId[]): CharacterUseConsent {
+  const allowedThemeIds = normalizeConsentThemeIds(themeIds);
+  return {
+    schema_version: 2,
+    allowed_theme_ids: allowedThemeIds,
+    theme_labels: allowedThemeIds.map((id) => CHARACTER_USE_CONSENT_THEME_LABELS[id]),
+    soft_enforcement: true,
+  };
+}
 function normalizeSharingClassificationValue(
   value: unknown,
 ): LocalSharingClassification {
@@ -1996,6 +2150,7 @@ function normalizeLocalMcdfEntry(value: unknown): LocalMcdfEntry | null {
     preview_crop: normalizePreviewCropValue(entry.preview_crop),
     is_adult: Boolean(entry.is_adult),
     visibility: normalizeMcdfVisibilityValue(entry.visibility),
+    character_use_consent: normalizeCharacterUseConsentValue(entry.character_use_consent),
     package_hash_blake3: nullableString(entry.package_hash_blake3),
     file_count: finiteNumber(entry.file_count),
     total_file_bytes: finiteNumber(entry.total_file_bytes),
@@ -2030,6 +2185,7 @@ function normalizePublicIndexPackageSummary(value: unknown): PublicIndexPackageS
     preview_crop: normalizePreviewCropValue(pkg.preview_crop),
     is_adult: Boolean(pkg.is_adult),
     visibility: safeString(pkg.visibility, "public"),
+    character_use_consent: normalizeCharacterUseConsentValue(pkg.character_use_consent),
     owner_display_name: safeString(pkg.owner_display_name, "Unknown creator"),
     owner_public_id: safeString(pkg.owner_public_id || pkg.owner_display_name, "unknown"),
     file_count: finiteNumber(pkg.file_count),
@@ -2435,9 +2591,14 @@ async function probeKnownFiles(
 ): Promise<FileProbeResponse | null> {
   const token = archiveActionToken();
   if (!token) return null;
+  const publisher = localPublisherAuthHeaders();
   return await invoke<FileProbeResponse>("probe_mcdf_hash_manifest", {
     serverUrl: configuredArchiveHost(),
     bearerToken: token,
+    publisherId: publisher.publisherId,
+    publisherDisplayName: publisher.publisherDisplayName,
+    publisherPublicKey: publisher.publisherPublicKey,
+    publisherCertificate: publisher.publisherCertificate,
     files,
   });
 }
@@ -3662,6 +3823,7 @@ function AddMcdfEntryModal({
   const [previewImporting, setPreviewImporting] = useState(false);
   const [draftPreviewImageFailed, setDraftPreviewImageFailed] = useState(false);
   const [draftFramingOpen, setDraftFramingOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -3677,6 +3839,7 @@ function AddMcdfEntryModal({
     setPreviewImporting(false);
     setDraftPreviewImageFailed(false);
     setDraftFramingOpen(false);
+    setImportModalOpen(false);
   }, [open]);
 
   useEffect(() => {
@@ -3872,6 +4035,7 @@ function AddMcdfEntryModal({
           "Added from a remote source. No files were uploaded.",
         ],
       });
+      setImportModalOpen(false);
       setStep("details");
       const message = `${scanned.file_count} files found. Review the entry before adding it.`;
       setStage(opId, 100, "Ready to add", message);
@@ -3945,6 +4109,7 @@ function AddMcdfEntryModal({
       preview_crop: normalizePreviewCropValue(pkg.preview_crop),
       is_adult: Boolean(pkg.is_adult),
       visibility: normalizeMcdfVisibilityValue(pkg.visibility),
+      character_use_consent: packageCharacterUseConsentValue(pkg),
       package_hash_blake3: hash,
       file_count: finiteNumber(pkg.file_count),
       total_file_bytes: finiteNumber(pkg.total_file_bytes),
@@ -4122,6 +4287,7 @@ function AddMcdfEntryModal({
         preview_crop: draft.previewPath ? normalizePreviewCrop(draft.previewCrop) : null,
         is_adult: draft.isAdult,
         visibility: draft.visibility,
+        character_use_consent: draft.characterUseConsent || defaultCharacterUseConsent(),
         package_hash_blake3:
           draft.packageHash || existing?.package_hash_blake3 || null,
         file_count: draft.fileCount ?? draft.files.length,
@@ -4201,47 +4367,18 @@ function AddMcdfEntryModal({
                 {loading ? "Reading MCDF…" : "Choose MCDF…"}
               </PrimaryButton>
             </div>
-            <div className="online-import-panel">
-              <div className="eyebrow">Import from the internet</div>
-              <div className="online-import-group">
-                <h3>Google Drive or direct MCDF link</h3>
-                <Field
-                  value={remoteUrl}
-                  onChange={(e) => setRemoteUrl(e.target.value)}
-                  placeholder="Google Drive or direct MCDF URL"
-                />
-                <Field
-                  value={remotePreviewUrl}
-                  onChange={(e) => setRemotePreviewUrl(e.target.value)}
-                  placeholder="Preview image URL, optional"
-                />
-                <GhostButton
-                  disabled={loading || !remoteUrl.trim()}
-                  onClick={chooseRemoteMcdf}
-                >
-                  {loading ? "Reading link…" : "Read link"}
-                </GhostButton>
-              </div>
-              <div className="online-import-group">
-                <h3>Share code or bulk import</h3>
-                <textarea
-                  value={sharedImportText}
-                  onChange={(e) => setSharedImportText(e.target.value)}
-                  placeholder="mcdf.thebigtree.life:23147ff9...&#10;Paste one or more share codes, one per line"
-                  rows={4}
-                />
-                <Field
-                  value={sharedImportTag}
-                  onChange={(e) => setSharedImportTag(e.target.value)}
-                  placeholder="Optional tag for all imported entries"
-                />
-                <GhostButton
-                  disabled={loading || !sharedImportText.trim()}
-                  onClick={() => void importSharedEntries()}
-                >
-                  {loading ? "Importing…" : "Import shared entries"}
-                </GhostButton>
-              </div>
+            <div className="online-import-panel online-import-panel-compact">
+              <div className="eyebrow">Internet source</div>
+              <h3>Import from another place</h3>
+              <p className="empty-small">
+                Use Google Drive, a direct MCDF URL, or an MCDF Manager share code.
+              </p>
+              <PrimaryButton
+                disabled={loading}
+                onClick={() => setImportModalOpen(true)}
+              >
+                Import
+              </PrimaryButton>
             </div>
             <div className="add-entry-progress-row">
               <AnalyzeProgressBar progress={progress} />
@@ -4380,6 +4517,77 @@ function AddMcdfEntryModal({
             </div>
           </div>
         ) : null}
+        {importModalOpen && (
+          <div
+            className="import-source-modal-overlay"
+            role="presentation"
+            onMouseDown={() => setImportModalOpen(false)}
+          >
+            <div
+              className="modal-card import-source-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Import MCDF source"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="panel-title-row refined-modal-head">
+                <div>
+                  <div className="eyebrow">Import</div>
+                  <h2>Import MCDF</h2>
+                </div>
+                <button
+                  type="button"
+                  className="modal-icon-close"
+                  onClick={() => setImportModalOpen(false)}
+                  aria-label="Close import options"
+                >
+                  <SvgIcon name="close" />
+                </button>
+              </div>
+              <div className="online-import-modal-grid">
+                <div className="online-import-group">
+                  <h3>Google Drive or direct MCDF link</h3>
+                  <Field
+                    value={remoteUrl}
+                    onChange={(e) => setRemoteUrl(e.target.value)}
+                    placeholder="Google Drive or direct MCDF URL"
+                  />
+                  <Field
+                    value={remotePreviewUrl}
+                    onChange={(e) => setRemotePreviewUrl(e.target.value)}
+                    placeholder="Preview image URL, optional"
+                  />
+                  <GhostButton
+                    disabled={loading || !remoteUrl.trim()}
+                    onClick={() => void chooseRemoteMcdf()}
+                  >
+                    {loading ? "Reading link…" : "Read link"}
+                  </GhostButton>
+                </div>
+                <div className="online-import-group">
+                  <h3>Share code or bulk import</h3>
+                  <textarea
+                    value={sharedImportText}
+                    onChange={(e) => setSharedImportText(e.target.value)}
+                    placeholder="mcdf.thebigtree.life:23147ff9...&#10;Paste one or more share codes, one per line"
+                    rows={4}
+                  />
+                  <Field
+                    value={sharedImportTag}
+                    onChange={(e) => setSharedImportTag(e.target.value)}
+                    placeholder="Optional tag for all imported entries"
+                  />
+                  <GhostButton
+                    disabled={loading || !sharedImportText.trim()}
+                    onClick={() => void importSharedEntries()}
+                  >
+                    {loading ? "Importing…" : "Import shared entries"}
+                  </GhostButton>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {draftFramingOpen && draft?.previewPath && (
           <PreviewFramingModal
             image={draft.previewPath}
@@ -4452,6 +4660,8 @@ function OnlineLibraryPanel({
   const [publishIsAdult, setPublishIsAdult] = useState(false);
   const [publishVisibility, setPublishVisibility] =
     useState<McdfVisibility>("public");
+  const [publishConsentThemeIds, setPublishConsentThemeIds] =
+    useState<CharacterUseConsentThemeId[]>(() => [...CHARACTER_USE_CONSENT_THEME_IDS]);
   const [publishingRulesAccepted, setPublishingRulesAccepted] = useState(
     hasAcceptedPublishingRules(),
   );
@@ -4568,6 +4778,7 @@ function OnlineLibraryPanel({
       preview_crop: normalizePreviewCropValue(pkg.preview_crop),
       is_adult: Boolean(pkg.is_adult),
       visibility: normalizeMcdfVisibilityValue(pkg.visibility),
+      character_use_consent: packageCharacterUseConsentValue(pkg),
       package_hash_blake3: pkg.package_hash_blake3,
       file_count: finiteNumber(pkg.file_count),
       total_file_bytes: finiteNumber(pkg.total_file_bytes),
@@ -4650,6 +4861,8 @@ function OnlineLibraryPanel({
     if (!ownerKey || !currentKey || ownerKey === currentKey) return null;
     return `This package is already an Exchange entry by ${owner.displayName || owner.publicId}. You can download, sync, and export it for personal use, but only the original owner can publish or re-share it on The Eorzea Exchange.`;
   };
+  const entryUsesLocalOnlyMetadata = (entry: LocalMcdfEntry): boolean =>
+    entry.storage_state === "subscribed" || Boolean(entryReshareBlockReason(entry));
   const librarySharingLabel = (entry: LocalMcdfEntry): string => {
     if (entry.sharing_policy?.status === "blocked") return "Disallowed";
     if (entryReshareBlockReason(entry)) return "Personal use";
@@ -4717,6 +4930,7 @@ function OnlineLibraryPanel({
     addRow("Exchange", entryPublicLabel(entry), entryPublicClass(entry));
     addRow("Source", sourceLabel(entry), sourceClass(entry));
     addRow("Sharing", librarySharingLabel(entry), librarySharingClass(entry));
+    addRow("Consent", consentSummary(entry.character_use_consent), "status-neutral");
     addRow("Files", `${entry.file_count}`, "status-neutral");
     addRow("Payload", formatBytes(entry.total_file_bytes), "status-neutral");
     if (entryIsAdult(entry)) addRow("Content", "18+", "status-warn");
@@ -5805,10 +6019,25 @@ function OnlineLibraryPanel({
     setPublishPreviewPath(entry.preview_image_path || null);
     setPublishIsAdult(Boolean(entryIsAdult(entry)));
     setPublishVisibility(entry.visibility || "public");
+    const consent = normalizeCharacterUseConsentValue(entry.character_use_consent);
+    setPublishConsentThemeIds([...consent.allowed_theme_ids]);
   };
 
   const saveMetadata = () => {
     if (!selectedEntry) return;
+    if (entryUsesLocalOnlyMetadata(selectedEntry)) {
+      updateEntry(selectedEntry.id, {
+        title: publishTitle.trim() || selectedEntry.title,
+        tags: tagsFromText(publishTags),
+        notes: ["Local title and tags updated."],
+      });
+      setEditEntryDetails(false);
+      return;
+    }
+    if (publishConsentThemeIds.length === 0) {
+      setError("Select at least one allowed theme for character use consent.");
+      return;
+    }
     updateEntry(selectedEntry.id, {
       title: publishTitle.trim() || selectedEntry.title,
       description: publishDescription.trim(),
@@ -5816,8 +6045,10 @@ function OnlineLibraryPanel({
       preview_image_path: publishPreviewPath,
       is_adult: publishIsAdult,
       visibility: publishVisibility,
+      character_use_consent: buildCharacterUseConsent(publishConsentThemeIds),
       notes: ["Local metadata updated."],
     });
+    setEditEntryDetails(false);
   };
 
   const publishSelected = async (entry = selectedEntry) => {
@@ -5885,6 +6116,13 @@ function OnlineLibraryPanel({
     const nextVisibility = usesOpenEditor
       ? publishVisibility
       : entry.visibility || "public";
+    if (usesOpenEditor && publishConsentThemeIds.length === 0) {
+      setError("Select at least one allowed theme for character use consent.");
+      return;
+    }
+    const nextCharacterUseConsent = usesOpenEditor
+      ? buildCharacterUseConsent(publishConsentThemeIds)
+      : normalizeCharacterUseConsentValue(entry.character_use_consent);
     const opId = addOperation({
       kind: "upload",
       label: `Publish ${nextTitle || entry.original_filename}`,
@@ -5905,6 +6143,7 @@ function OnlineLibraryPanel({
           previewCrop: nextPreviewCrop,
           isAdult: nextIsAdult,
           visibility: nextVisibility,
+          characterUseConsent: nextCharacterUseConsent,
           ...localPublisherAuthHeaders(),
         },
       );
@@ -5919,6 +6158,7 @@ function OnlineLibraryPanel({
         preview_crop: nextPreviewCrop,
         is_adult: nextIsAdult,
         visibility: nextVisibility,
+        character_use_consent: nextCharacterUseConsent,
         package_hash_blake3: result.package_hash_blake3,
         file_count: result.file_count,
         total_file_bytes: result.package_size,
@@ -5964,7 +6204,9 @@ function OnlineLibraryPanel({
       setPublishPreviewPath(selectedEntry.preview_image_path || null);
       setPublishIsAdult(Boolean(entryIsAdult(selectedEntry)));
       setPublishVisibility(selectedEntry.visibility || "public");
-    }
+      const consent = normalizeCharacterUseConsentValue(selectedEntry.character_use_consent);
+      setPublishConsentThemeIds([...consent.allowed_theme_ids]);
+      }
     setEntryFramingOpen(false);
     setEditEntryDetails(false);
   }, [selectedEntry?.id]);
@@ -6391,7 +6633,6 @@ function OnlineLibraryPanel({
               </div>
               <div className="detail-title-actions">
                 {!editEntryDetails &&
-                selectedEntry.storage_state !== "subscribed" &&
                 selectedEntry.storage_state !== "removed" ? (
                   <GhostButton
                     disabled={loading}
@@ -6461,40 +6702,97 @@ function OnlineLibraryPanel({
                   onChange={(e) => setPublishTags(e.target.value)}
                   placeholder="Tags, comma separated"
                 />
-                <Field
-                  value={publishDescription}
-                  onChange={(e) => setPublishDescription(e.target.value)}
-                  placeholder="Public description"
-                />
-                <label className="form-label">Visibility</label>
-                <select
-                  value={publishVisibility}
-                  onChange={(e) =>
-                    setPublishVisibility(e.target.value as McdfVisibility)
-                  }
-                >
-                  <option value="public">Public in The Eorzea Exchange</option>
-                  <option value="locked">
-                    Locked — listed by server only, access requires approval
-                  </option>
-                  <option value="private">Private/server-only</option>
-                </select>
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={publishIsAdult}
-                    onChange={(e) => setPublishIsAdult(e.target.checked)}
-                  />{" "}
-                  <span>Mark this MCDF as 18+</span>
-                </label>
+                {!entryUsesLocalOnlyMetadata(selectedEntry) && (
+                  <>
+                    <Field
+                      value={publishDescription}
+                      onChange={(e) => setPublishDescription(e.target.value)}
+                      placeholder="Public description"
+                    />
+                    <label className="form-label">Visibility</label>
+                    <select
+                      value={publishVisibility}
+                      onChange={(e) =>
+                        setPublishVisibility(e.target.value as McdfVisibility)
+                      }
+                    >
+                      <option value="public">Public in The Eorzea Exchange</option>
+                      <option value="locked">
+                        Locked — listed by server only, access requires approval
+                      </option>
+                      <option value="private">Private/server-only</option>
+                    </select>
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={publishIsAdult}
+                        onChange={(e) => setPublishIsAdult(e.target.checked)}
+                      />{" "}
+                      <span>Mark this MCDF as 18+</span>
+                    </label>
+                    <div className="consent-form-panel">
+                      <div className="consent-form-heading">
+                        <label className="form-label">Allowed themes</label>
+                        <div className="consent-form-actions">
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => setPublishConsentThemeIds([...CHARACTER_USE_CONSENT_THEME_IDS])}
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => setPublishConsentThemeIds([])}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      <div className="consent-theme-table" role="table" aria-label="Allowed themes">
+                        {CHARACTER_USE_CONSENT_THEMES.map((theme) => {
+                          const checked = publishConsentThemeIds.includes(theme.id);
+                          return (
+                            <label
+                              key={theme.id}
+                              className="consent-theme-row"
+                              title={theme.description}
+                              role="row"
+                            >
+                              <span className="consent-theme-check" role="cell">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setPublishConsentThemeIds((current) =>
+                                      e.target.checked
+                                        ? Array.from(new Set([...current, theme.id]))
+                                        : current.filter((id) => id !== theme.id),
+                                    );
+                                  }}
+                                />
+                              </span>
+                              <span className="consent-theme-title" role="cell">{theme.label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
                 <div className="hero-actions">
-                  <GhostButton disabled={loading} onClick={choosePreview}>
-                    {publishPreviewPath ? "Change picture" : "Add picture"}
-                  </GhostButton>
-                  {publishPreviewPath && (
-                    <GhostButton disabled={loading} onClick={clearPreview}>
-                      Remove picture
-                    </GhostButton>
+                  {!entryUsesLocalOnlyMetadata(selectedEntry) && (
+                    <>
+                      <GhostButton disabled={loading} onClick={choosePreview}>
+                        {publishPreviewPath ? "Change picture" : "Add picture"}
+                      </GhostButton>
+                      {publishPreviewPath && (
+                        <GhostButton disabled={loading} onClick={clearPreview}>
+                          Remove picture
+                        </GhostButton>
+                      )}
+                    </>
                   )}
                   <GhostButton disabled={loading} onClick={saveMetadata}>
                     Save locally
@@ -7192,11 +7490,6 @@ function StorageFoldersPanel({
           </span>
         )}
       </div>
-      <p>
-        Choose where MCDF Manager stores your library metadata and rebuilt
-        downloads. Cache maintenance appears in notifications when it needs
-        attention.
-      </p>
       <div className="storage-folder-grid">
         <label className="wide-field">
           <span>Config file</span>
@@ -8201,11 +8494,28 @@ function SettingsPanel({
     setTokenError(null);
     setTokenMessage(null);
     try {
-      await saveAdminToken(nextToken);
-      const storedToken = storedAdminToken().trim();
-      setSavedAdminToken(storedToken);
-      setAdminToken(storedToken);
-      setTokenMessage(storedToken ? "Admin/moderation token saved. Admin is now available." : "Admin/moderation token cleared.");
+      if (!nextToken) {
+        await saveAdminToken("");
+        saveUploadToken("");
+        setSavedAdminToken("");
+        setAdminToken("");
+        setTokenMessage("Access token cleared.");
+        return;
+      }
+      const adminAccepted = await validateAdminToken(nextToken);
+      if (adminAccepted) {
+        await saveAdminToken(nextToken);
+        const storedToken = storedAdminToken().trim();
+        setSavedAdminToken(storedToken);
+        setAdminToken(storedToken);
+        setTokenMessage("Admin/moderation token verified and saved. Admin is now available.");
+        return;
+      }
+      await saveAdminToken("");
+      saveUploadToken(nextToken);
+      setSavedAdminToken("");
+      setAdminToken("");
+      setTokenMessage("Token saved as an uploader token. Admin stays hidden unless an admin/moderation token is verified.");
     } catch (error) {
       setTokenError(String(error));
     } finally {
@@ -8294,9 +8604,6 @@ function SettingsPanel({
             {storageUsage ? formatBytes(storageUsage.total_bytes) : "checking"}
           </span>
         </div>
-        <p className="empty-small">
-          This is the space used by the local library, Exchange cache, synced packages, downloads, and app home folders on this machine.
-        </p>
         {storageUsage ? (
           <div className="storage-usage-table">
             {storageUsage.items.map((item) => (
@@ -8326,7 +8633,7 @@ function SettingsPanel({
         <div className="panel-title-row">
           <div>
             <div className="eyebrow">Token</div>
-            <h2>Server token</h2>
+            <h2>Access token</h2>
           </div>
           <span
             className={
@@ -8341,11 +8648,6 @@ function SettingsPanel({
           </span>
         </div>
         <div className="token-locked-state">
-          <p className="empty-small">
-            Save an admin/moderation token to unlock the Admin area on this client.
-            The token is stored in the selected MCDF Manager config and mirrored
-            locally so the Admin pane appears immediately after a successful save.
-          </p>
           <div className="form-grid single-column">
             <Field
               type="password"
@@ -8355,7 +8657,7 @@ function SettingsPanel({
                 setTokenMessage(null);
                 setTokenError(null);
               }}
-              placeholder={tokenConfigured ? "Paste replacement admin token" : "Admin/moderation token"}
+              placeholder={tokenConfigured ? "Paste replacement access token" : "Upload or admin token"}
             />
           </div>
           <div className="hero-actions">
@@ -8363,7 +8665,7 @@ function SettingsPanel({
               disabled={tokenSaving || (!adminToken.trim() && !savedAdminToken.trim()) || (!tokenHasChanges && tokenConfigured)}
               onClick={() => void saveSettingsAdminToken()}
             >
-              {tokenSaving ? "Saving…" : tokenConfigured ? "Save admin token changes" : "Save admin token"}
+              {tokenSaving ? "Saving…" : tokenConfigured ? "Save token changes" : "Save token"}
             </GhostButton>
             {tokenConfigured && (
               <GhostButton disabled={tokenSaving} onClick={() => void clearSettingsAdminToken()}>
@@ -8386,9 +8688,6 @@ function SettingsPanel({
             {settingsFavoriteHashes.length + settingsCreatorSubscriptions.length + settingsPackageSubscriptions.length} saved
           </span>
         </div>
-        <p className="empty-small">
-          Favorites and followed creators are stored locally. Favorites make entries easy to find later. Following a creator or adding an Exchange entry to My Library tracks it locally without downloading the MCDF until you choose Download.
-        </p>
         <div className="settings-list-summary">
           <div>
             <strong>{settingsFavoriteHashes.length}</strong>
@@ -10019,7 +10318,7 @@ function PublishedIndexPanel({
   const [packageLoading, setPackageLoading] = useState(false);
   const [exchangeSearch, setExchangeSearch] = useState("");
   const [exchangeTagFilter, setExchangeTagFilter] = useState("");
-  const [creatorFilter, setCreatorFilter] = useState("");
+  const [exchangeThemeFilter, setExchangeThemeFilter] = useState<CharacterUseConsentThemeId | "">("");
   const [librarySettings, setLibrarySettings] = useState<LocalLibrarySettings>(
     () => readLibrarySettings(),
   );
@@ -10474,6 +10773,7 @@ function PublishedIndexPanel({
       previewImagePath: "",
       previewImageName: "",
       previewCrop: normalizePreviewCrop(selectedPublicPackage.preview_crop),
+      characterUseConsent: packageCharacterUseConsentValue(selectedPublicPackage),
     });
   };
 
@@ -10502,6 +10802,11 @@ function PublishedIndexPanel({
       return;
     }
     const title = exchangeEditDraft.title.trim();
+    const exchangeConsent = normalizeCharacterUseConsentValue(exchangeEditDraft.characterUseConsent);
+    if (exchangeConsent.allowed_theme_ids.length === 0) {
+      setIndexError("Select at least one allowed theme for character use consent.");
+      return;
+    }
     if (!title) {
       setIndexError("Give the Exchange listing a title before saving.");
       return;
@@ -10525,6 +10830,7 @@ function PublishedIndexPanel({
           visibility,
           previewImagePath: exchangeEditDraft.previewImagePath || null,
           previewCrop: normalizePreviewCrop(exchangeEditDraft.previewCrop),
+          characterUseConsent: exchangeConsent,
           publisherId: publisherAuth.publisherId,
           publisherDisplayName: publisherAuth.publisherDisplayName,
           publisherPublicKey: publisherAuth.publisherPublicKey,
@@ -10617,26 +10923,25 @@ function PublishedIndexPanel({
   const availableTags = Array.from(
     new Set(packages.flatMap((pkg) => pkg.tags || [])),
   ).sort();
-  const availableCreators: Array<[string, string]> = Array.from(
-    new Map<string, string>(
-      packages.map((pkg) => [
-        creatorKeyFromPackage(pkg),
-        creatorLabelFromPackage(pkg),
-      ]),
-    ).entries(),
-  ).sort((a, b) => a[1].localeCompare(b[1]));
+  const availableThemes = CHARACTER_USE_CONSENT_THEMES.filter((theme) =>
+    packages.some((pkg) =>
+      normalizeCharacterUseConsentValue(packageCharacterUseConsentValue(pkg)).allowed_theme_ids.includes(theme.id),
+    ),
+  );
   const visiblePackages = packages.filter((pkg) => {
+    const consent = normalizeCharacterUseConsentValue(packageCharacterUseConsentValue(pkg));
+    const shareCode = `mcdf.thebigtree.life:${pkg.share_id || pkg.share_code || pkg.package_hash_blake3 || ""}`;
     const haystack =
-      `${pkg.title || ""} ${pkg.original_filename || ""} ${pkg.owner_display_name || ""} ${stringArray(pkg.tags).join(" ")} ${stringArray(pkg.component_kinds).join(" ")}`.toLowerCase();
+      `${pkg.title || ""} ${pkg.original_filename || ""} ${pkg.package_hash_blake3 || ""} ${pkg.share_id || ""} ${pkg.share_code || ""} ${shareCode} ${stringArray(pkg.tags).join(" ")} ${stringArray(pkg.component_kinds).join(" ")} ${consent.theme_labels.join(" ")} ${consent.allowed_theme_ids.join(" ")}`.toLowerCase();
     const matchesSearch =
       !exchangeSearch.trim() ||
       haystack.includes(exchangeSearch.trim().toLowerCase());
     const adult = packageIsAdult(pkg);
     const adultVisible = librarySettings.adultContentMode === "show" || !adult;
-    const creatorId = creatorKeyFromPackage(pkg);
-    const matchesCreator = !creatorFilter || creatorId === creatorFilter;
     const matchesTag =
       !exchangeTagFilter || (pkg.tags || []).includes(exchangeTagFilter);
+    const matchesTheme =
+      !exchangeThemeFilter || consent.allowed_theme_ids.includes(exchangeThemeFilter);
     const matchesShelf =
       exchangeFilter === "all" ||
       (exchangeFilter === "favorites" &&
@@ -10647,21 +10952,12 @@ function PublishedIndexPanel({
         packageSubscriptions.includes(pkg.package_hash_blake3));
     return (
       matchesSearch &&
-      matchesCreator &&
       matchesTag &&
+      matchesTheme &&
       adultVisible &&
       matchesShelf
     );
   });
-  const selectedCreator = creatorFilter
-    ? availableCreators.find(([creatorId]) => creatorId === creatorFilter)
-    : null;
-  const creatorPackages = creatorFilter
-    ? packages.filter((pkg) => creatorKeyFromPackage(pkg) === creatorFilter)
-    : [];
-  const creatorTagShelf = Array.from(
-    new Set(creatorPackages.flatMap((pkg) => pkg.tags || [])),
-  ).slice(0, 16);
   const unseenSubscribedCount = packages.filter(
     (pkg) =>
       packageSubscriptions.includes(pkg.package_hash_blake3) &&
@@ -10693,7 +10989,7 @@ function PublishedIndexPanel({
             <Field
               value={exchangeSearch}
               onChange={(e) => setExchangeSearch(e.target.value)}
-              placeholder="Search title, creator, tags, components…"
+              placeholder="Search title, share code, tags, themes…"
             />
             <select
               value={librarySettings.exchangeViewMode}
@@ -10718,17 +11014,6 @@ function PublishedIndexPanel({
               <option value="subscribed">Tracked entries</option>
             </select>
             <select
-              value={creatorFilter}
-              onChange={(e) => setCreatorFilter(e.target.value)}
-            >
-              <option value="">All creators</option>
-              {availableCreators.map(([creatorId, label]) => (
-                <option key={creatorId} value={creatorId}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <select
               value={exchangeTagFilter}
               onChange={(e) => setExchangeTagFilter(e.target.value)}
             >
@@ -10736,6 +11021,19 @@ function PublishedIndexPanel({
               {availableTags.map((tag) => (
                 <option key={tag} value={tag}>
                   {tag}
+                </option>
+              ))}
+            </select>
+            <select
+              value={exchangeThemeFilter}
+              onChange={(e) =>
+                setExchangeThemeFilter(e.target.value as CharacterUseConsentThemeId | "")
+              }
+            >
+              <option value="">All themes</option>
+              {availableThemes.map((theme) => (
+                <option key={theme.id} value={theme.id}>
+                  {theme.label}
                 </option>
               ))}
             </select>
@@ -10752,32 +11050,6 @@ function PublishedIndexPanel({
           </div>
         </div>
         <ErrorBox error={indexError} />
-        {selectedCreator && (
-          <div className="exchange-inline-section creator-profile-line">
-            <div>
-              <div className="eyebrow">Creator</div>
-              <h2>{selectedCreator[1]}</h2>
-              <p>
-                {creatorPackages.length} public entries by this creator.
-              </p>
-              {creatorTagShelf.length > 0 && (
-                <div className="tag-row compact-tags">
-                  {creatorTagShelf.map((tag) => (
-                    <span key={tag}>#{tag}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="inline-actions">
-              <GhostButton
-                className="flat-action"
-                onClick={() => setCreatorFilter("")}
-              >
-                All creators
-              </GhostButton>
-            </div>
-          </div>
-        )}
         {exchangeFilter === "subscribed" && unseenSubscribedCount > 0 && (
           <div className="exchange-inline-section subscription-line">
             <strong>
@@ -10816,7 +11088,6 @@ function PublishedIndexPanel({
                   <span>Actions</span>
                 </div>
                 {visiblePackages.map((pkg) => {
-                  const creatorId = creatorKeyFromPackage(pkg);
                   const isFavorite = favoriteHashes.includes(
                     pkg.package_hash_blake3,
                   );
@@ -10841,13 +11112,9 @@ function PublishedIndexPanel({
                           <span className="mini-warning">18+</span>
                         )}
                       </button>
-                      <button
-                        type="button"
-                        className="exchange-table-link"
-                        onClick={() => setCreatorFilter(creatorId)}
-                      >
+                      <span className="exchange-table-link exchange-table-creator-text">
                         {pkg.owner_display_name || "Unknown"}
-                      </button>
+                      </span>
                       <span>{pkg.file_count}</span>
                       <span>{formatBytes(pkg.total_file_bytes)}</span>
                       <span>
@@ -10890,7 +11157,6 @@ function PublishedIndexPanel({
             ) : (
               <div className="browse-results card-grid exchange-card-grid">
                 {visiblePackages.map((pkg) => {
-                  const creatorId = creatorKeyFromPackage(pkg);
                   const isFavorite = favoriteHashes.includes(
                     pkg.package_hash_blake3,
                   );
@@ -10964,12 +11230,6 @@ function PublishedIndexPanel({
                         >
                           {isFavorite ? <SvgIcon name="favorite-filled" /> : <SvgIcon name="favorite-empty" />}
                         </button>
-                        <GhostButton
-                          className="flat-action"
-                          onClick={() => setCreatorFilter(creatorId)}
-                        >
-                          {pkg.owner_display_name || "Creator"}
-                        </GhostButton>
                         <GhostButton
                           className="flat-action"
                           disabled={packageLoading}
@@ -11126,6 +11386,80 @@ function PublishedIndexPanel({
                     placeholder="fantasy, event, pose, texture"
                   />
                 </label>
+                <div className="consent-form-panel exchange-consent-panel">
+                  <div className="consent-form-heading">
+                    <label className="form-label">Allowed themes</label>
+                    <div className="consent-form-actions">
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() =>
+                          setExchangeEditDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  characterUseConsent: buildCharacterUseConsent([...CHARACTER_USE_CONSENT_THEME_IDS]),
+                                }
+                              : current,
+                          )
+                        }
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() =>
+                          setExchangeEditDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  characterUseConsent: buildCharacterUseConsent([]),
+                                }
+                              : current,
+                          )
+                        }
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="consent-theme-table" role="table" aria-label="Allowed themes">
+                    {CHARACTER_USE_CONSENT_THEMES.map((theme) => {
+                      const currentConsent = normalizeCharacterUseConsentValue(exchangeEditDraft.characterUseConsent);
+                      const checked = currentConsent.allowed_theme_ids.includes(theme.id);
+                      return (
+                        <label
+                          key={theme.id}
+                          className="consent-theme-row"
+                          title={theme.description}
+                          role="row"
+                        >
+                          <span className="consent-theme-check" role="cell">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                setExchangeEditDraft((current) => {
+                                  if (!current) return current;
+                                  const consent = normalizeCharacterUseConsentValue(current.characterUseConsent);
+                                  const nextIds = e.target.checked
+                                    ? Array.from(new Set([...consent.allowed_theme_ids, theme.id]))
+                                    : consent.allowed_theme_ids.filter((id) => id !== theme.id);
+                                  return {
+                                    ...current,
+                                    characterUseConsent: buildCharacterUseConsent(nextIds),
+                                  };
+                                });
+                              }}
+                            />
+                          </span>
+                          <span className="consent-theme-title" role="cell">{theme.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div className="exchange-readonly-row" aria-label="Listing status">
                   <span className="status-pill status-neutral">
                     {(selectedPublicPackage.visibility || "public").toUpperCase()}
@@ -11209,6 +11543,10 @@ function PublishedIndexPanel({
                 <div className="exchange-detail-info-row">
                   <span>Payload</span>
                   <strong>{formatBytes(selectedPublicPackage.total_file_bytes)}</strong>
+                </div>
+                <div className="exchange-detail-info-row exchange-detail-info-row-wide">
+                  <span>Themes</span>
+                  <strong>{consentSummary(packageCharacterUseConsentValue(selectedPublicPackage))}</strong>
                 </div>
                 <div className="exchange-detail-info-row exchange-detail-info-row-wide">
                   <span>Description</span>
@@ -11669,9 +12007,7 @@ function App() {
   const [operations, setOperations] = useState<Operation[]>([]);
   const [storageSetupOpen, setStorageSetupOpen] = useState(false);
   const [eulaOpen, setEulaOpen] = useState(!hasAcceptedEula());
-  const [adminTokenConfigured, setAdminTokenConfigured] = useState(() =>
-    Boolean(storedAdminToken().trim()),
-  );
+  const [adminTokenConfigured, setAdminTokenConfigured] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -11913,14 +12249,21 @@ function App() {
     setSharedArchiveConnected(false);
   };
   useEffect(() => {
-    const refreshAdminVisibility = () =>
-      setAdminTokenConfigured(Boolean(storedAdminToken().trim()));
+    let cancelled = false;
+    const refreshAdminVisibility = () => {
+      loadAdminTokenFromConfig()
+        .then((token) => {
+          if (!cancelled) setAdminTokenConfigured(Boolean(token.trim()));
+        })
+        .catch(() => {
+          if (!cancelled) setAdminTokenConfigured(false);
+        });
+    };
     window.addEventListener("mcdf-admin-token-changed", refreshAdminVisibility);
     window.addEventListener("storage", refreshAdminVisibility);
-    loadAdminTokenFromConfig()
-      .then((token) => setAdminTokenConfigured(Boolean(token.trim())))
-      .catch(refreshAdminVisibility);
+    refreshAdminVisibility();
     return () => {
+      cancelled = true;
       window.removeEventListener(
         "mcdf-admin-token-changed",
         refreshAdminVisibility,

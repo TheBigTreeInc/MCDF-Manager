@@ -1,3 +1,45 @@
+## fix211 - asset protocol library drive previews
+
+- Expanded the Tauri asset protocol scope so Library preview images stored on user-selected library drives such as `D:\MCDFM\Library\previews` can render.
+- Keeps arbitrary local preview/library folders usable when the Library root is outside the Windows user profile.
+
+
+## fix210 - Exchange creator search removal
+
+- Removed the creator filter from The Eorzea Exchange toolbar.
+- Exchange text search no longer matches creator names or creator ids.
+- Creator names remain visible as listing metadata, but they are no longer clickable search/filter controls.
+
+
+## fix209 - uploader probe auth and Exchange theme filters
+
+- Online BLAKE3 availability checks now send the uploader token before any stale admin token and include publisher identity headers when available.
+- Exchange search now matches share ids/share codes and package hashes.
+- Added an Exchange theme filter based on the published Allowed themes consent metadata.
+- Exchange details now show the selected theme consent summary.
+
+
+## fix208 - settings copy cleanup
+
+- Removed redundant explanatory paragraphs from Settings.
+- Renamed the token settings heading to Access token.
+- Removed the saved-configuration note emitted by the storage settings writer.
+
+- fix207: Theme consent table, local-only edits for downloaded Exchange entries, and detail overflow cleanup.
+
+## fix206 - Add MCDF import modal and theme wording
+
+- Renamed user-facing character-use consent wording from movie themes to themes.
+- Simplified Add MCDF so the right side has one Import button.
+- Moved Google Drive/direct URL and share-code import options into a focused Import modal.
+
+## fix202 - verified admin tokens only
+
+- Admin navigation now stays hidden until the server verifies the saved token against an admin-only endpoint.
+- Tokens pasted in Settings are classified by capability: verified admin/moderation tokens unlock Admin; all other non-empty tokens are saved as upload tokens only.
+- Invalid or upload-only tokens no longer expose Admin, even when they were previously stored in the old admin-token slot.
+- Profile access continues to show `Uploader` when an upload token is present, but upload tokens only affect publishing/upload actions.
+
 
 ## fix198 - Temporary synced package cache
 
@@ -654,3 +696,23 @@
 - Removed the verbose non-owner re-share warning text from the normal detail view while preserving publish blocking behavior.
 - Replaced the detail status pills with a compact two-column table so metadata reads like structured information instead of scattered badges.
 - Kept owner/personal-use state in the table and action gating rather than as a large banner.
+
+## fix203 — Character use consent on publish
+
+- Added a required character-use consent preference to Library publish metadata.
+- Consent uses movie-style rating choices from `G` through `NC-17`, plus the default `No rating limit` option.
+- Every publish now sends consent metadata to the registry; default is permissive/everything allowed.
+- The Library detail table now shows the entry's consent preference.
+- Consent is documented as soft public preference metadata, not hard technical enforcement.
+
+## fix204 - Movie-theme character consent
+
+- Replaced rating-based character use consent with movie-theme consent checkboxes.
+- Consent now stores stable theme ids for future localization.
+- Defaults to all themes selected and remains soft-enforced public metadata.
+
+## fix205 - Consent union type build fix
+
+- Fixed TypeScript build errors from reading character-use consent across Exchange summary, subscription snapshot, and full package record shapes.
+- Added a shared helper that extracts consent from unknown package-like records without unsafe union casts.
+- Keeps movie-theme consent behavior unchanged.

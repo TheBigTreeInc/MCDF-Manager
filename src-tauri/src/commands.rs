@@ -711,6 +711,108 @@ pub struct PreviewCropData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterUseConsent {
+    #[serde(default = "default_consent_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_consent_theme_ids")]
+    pub allowed_theme_ids: Vec<String>,
+    #[serde(default)]
+    pub theme_labels: Vec<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default = "default_consent_soft_enforcement")]
+    pub soft_enforcement: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating_label: Option<String>,
+}
+
+const CONSENT_THEMES: &[(&str, &str)] = &[
+    ("comedy", "Comedy"),
+    ("action", "Action"),
+    ("adventure", "Adventure"),
+    ("drama", "Drama"),
+    ("romance", "Romance"),
+    ("horror", "Horror"),
+    ("fantasy", "Fantasy"),
+    ("sci_fi", "Sci-fi"),
+    ("thriller", "Thriller"),
+    ("erotic", "Erotic"),
+    ("slice_of_life", "Slice of life"),
+    ("dark_themes", "Dark themes"),
+];
+
+fn default_consent_schema_version() -> u32 { 2 }
+fn default_consent_theme_ids() -> Vec<String> {
+    CONSENT_THEMES.iter().map(|(id, _)| (*id).to_string()).collect()
+}
+fn default_consent_soft_enforcement() -> bool { true }
+
+impl Default for CharacterUseConsent {
+    fn default() -> Self {
+        let allowed_theme_ids = default_consent_theme_ids();
+        let theme_labels = consent_theme_labels(&allowed_theme_ids);
+        Self {
+            schema_version: 2,
+            allowed_theme_ids,
+            theme_labels,
+            notes: None,
+            soft_enforcement: true,
+            rating: None,
+            rating_label: None,
+        }
+    }
+}
+
+fn normalize_consent_theme_id(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_").replace(' ', "_");
+    CONSENT_THEMES
+        .iter()
+        .any(|(id, _)| *id == normalized)
+        .then_some(normalized)
+}
+
+fn consent_theme_labels(ids: &[String]) -> Vec<String> {
+    ids.iter()
+        .filter_map(|id| {
+            CONSENT_THEMES
+                .iter()
+                .find(|(theme_id, _)| *theme_id == id.as_str())
+                .map(|(_, label)| (*label).to_string())
+        })
+        .collect()
+}
+
+fn normalize_character_use_consent(input: Option<CharacterUseConsent>) -> CharacterUseConsent {
+    let mut consent = input.unwrap_or_default();
+    let mut allowed_theme_ids = Vec::<String>::new();
+    for id in consent.allowed_theme_ids.iter() {
+        if let Some(normalized) = normalize_consent_theme_id(id) {
+            if !allowed_theme_ids.contains(&normalized) {
+                allowed_theme_ids.push(normalized);
+            }
+        }
+    }
+    if allowed_theme_ids.is_empty() {
+        // Legacy rating-based consent did not name themes. Default to all
+        // themes so older entries remain permissive unless explicit theme ids exist.
+        allowed_theme_ids = default_consent_theme_ids();
+    }
+    consent.schema_version = 2;
+    consent.allowed_theme_ids = allowed_theme_ids;
+    consent.theme_labels = consent_theme_labels(&consent.allowed_theme_ids);
+    consent.rating = None;
+    consent.rating_label = None;
+    consent.notes = consent.notes.as_ref().and_then(|value| {
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.chars().take(500).collect::<String>())
+    });
+    consent.soft_enforcement = true;
+    consent
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicPackageRecord {
     pub schema_version: u32,
     pub generated_at: String,
@@ -729,6 +831,8 @@ pub struct PublicPackageRecord {
     pub is_adult: bool,
     #[serde(default)]
     pub visibility: Option<String>,
+    #[serde(default)]
+    pub character_use_consent: Option<CharacterUseConsent>,
     pub owner: PublicOwnerRecord,
     pub parser_revision: u32,
     pub parser_status: String,
@@ -941,6 +1045,8 @@ pub struct PublicIndexPackageSummary {
     pub is_adult: bool,
     #[serde(default)]
     pub visibility: Option<String>,
+    #[serde(default)]
+    pub character_use_consent: Option<CharacterUseConsent>,
     pub owner_display_name: String,
     pub owner_public_id: String,
     pub file_count: usize,
@@ -984,6 +1090,8 @@ pub struct PackageMarketplaceMetadata {
     pub is_adult: bool,
     #[serde(default)]
     pub visibility: Option<String>,
+    #[serde(default)]
+    pub character_use_consent: Option<CharacterUseConsent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1109,16 +1217,28 @@ fn inventory_from_extracted_files(files: Vec<ExtractedFileInfo>) -> Vec<FileInve
 pub fn probe_mcdf_hash_manifest(
     server_url: String,
     bearer_token: Option<String>,
+    publisher_id: Option<String>,
+    publisher_display_name: Option<String>,
+    publisher_public_key: Option<String>,
+    publisher_certificate: Option<String>,
     files: Vec<ExtractedFileInfo>,
 ) -> Result<FileProbeResponse, String> {
     let base = normalize_archive_server_url(&server_url)?;
     let client = archive_http_client()?;
     let inventory = inventory_from_extracted_files(files);
-    let mut request = client
-        .post(format!("{base}/v1/files/probe"))
-        .json(&FileProbeRequest { files: inventory });
+    let mut request = add_publisher_identity_headers(
+        client
+            .post(format!("{base}/v1/files/probe"))
+            .json(&FileProbeRequest { files: inventory }),
+        publisher_id.as_deref(),
+        publisher_display_name.as_deref(),
+        publisher_public_key.as_deref(),
+        publisher_certificate.as_deref(),
+    );
     if let Some(token) = bearer_token.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.bearer_auth(token);
+        request = request
+            .bearer_auth(token)
+            .header("x-mcdf-upload-token", token);
     }
     let response = request.send().map_err(|error| error.to_string())?;
     if !response.status().is_success() {
@@ -1961,6 +2081,7 @@ pub fn edit_exchange_entry(
     visibility: Option<String>,
     preview_image_path: Option<String>,
     preview_crop: Option<PreviewCropData>,
+    character_use_consent: Option<CharacterUseConsent>,
     publisher_id: Option<String>,
     publisher_display_name: Option<String>,
     publisher_public_key: Option<String>,
@@ -2002,6 +2123,7 @@ pub fn edit_exchange_entry(
         "visibility": visibility,
         "preview_image": preview_image,
         "preview_crop": preview_crop,
+        "character_use_consent": character_use_consent,
         "reason": "Edited from MCDF Manager",
     });
     let mut request = client.post(format!("{base}/v1/packages/{}/metadata", package_hash_blake3)).json(&payload);
@@ -2175,6 +2297,7 @@ pub fn upload_mcdf_to_central_server(
     preview_crop: Option<PreviewCropData>,
     is_adult: Option<bool>,
     visibility: Option<String>,
+    character_use_consent: Option<CharacterUseConsent>,
     publisher_id: Option<String>,
     publisher_display_name: Option<String>,
     publisher_public_key: Option<String>,
@@ -2187,7 +2310,7 @@ pub fn upload_mcdf_to_central_server(
         .and_then(|value| value.to_str())
         .unwrap_or("upload.mcdf")
         .to_string();
-    let mut marketplace = build_marketplace_metadata(title, description, tags.unwrap_or_default(), preview_image_path, preview_crop, is_adult.unwrap_or(false))?;
+    let mut marketplace = build_marketplace_metadata(title, description, tags.unwrap_or_default(), preview_image_path, preview_crop, is_adult.unwrap_or(false), character_use_consent)?;
     marketplace.visibility = visibility
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| matches!(value.as_str(), "public" | "locked" | "private"));
@@ -2234,6 +2357,7 @@ fn build_marketplace_metadata(
     preview_image_path: Option<String>,
     preview_crop: Option<PreviewCropData>,
     is_adult: bool,
+    character_use_consent: Option<CharacterUseConsent>,
 ) -> Result<PackageMarketplaceMetadata, String> {
     let cleaned_tags = tags
         .into_iter()
@@ -2269,6 +2393,7 @@ fn build_marketplace_metadata(
         preview_crop,
         is_adult,
         visibility: None,
+        character_use_consent: Some(normalize_character_use_consent(character_use_consent)),
     })
 }
 

@@ -176,7 +176,7 @@ pub fn save_storage_settings(update: StorageSettingsUpdate) -> Result<StorageSet
         auto_import_dirs: normalize_dir_list(update.auto_import_dirs, current.auto_import_dirs),
         auto_import_recursive: update.auto_import_recursive.unwrap_or(current.auto_import_recursive),
         admin_token: update.admin_token.or(current.admin_token),
-        notes: vec!["Configuration saved. MCDF Manager uses this config file, the selected library folders, and the auto-import folders listed here.".to_string()],
+        notes: Vec::new(),
     };
     ensure_storage_dirs(&next)?;
     let text = serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?;
