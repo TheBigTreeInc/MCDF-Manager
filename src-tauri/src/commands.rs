@@ -806,7 +806,16 @@ pub struct PublicPackageFileRecord {
 pub struct ArchiveDownloadResult {
     pub output_path: String,
     pub bytes_written: u64,
+    /// The canonical package hash for the listing/source when known. For Exchange
+    /// component rebuilds this remains the original published package hash, even
+    /// when the rebuilt container bytes are not byte-for-byte identical.
     pub package_hash_blake3: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuilt_package_hash_blake3: Option<String>,
+    #[serde(default)]
+    pub package_hash_verified: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1579,13 +1588,23 @@ pub fn download_package_from_exchange_index(
     };
 
     let actual_package_hash = blake3::hash(&rebuilt).to_hex().to_string();
-    if actual_package_hash != record.package_hash_blake3 {
+    let package_hash_verified = actual_package_hash == record.package_hash_blake3;
+    if !package_hash_verified && record.rebuild_strategy == "opaque_original_package" {
         return Err(format!(
-            "rebuilt package hash mismatch: expected {}, got {}",
+            "archived package hash mismatch: expected {}, got {}. The full original package archive does not match the public Exchange record.",
             record.package_hash_blake3,
             actual_package_hash
         ));
     }
+    let download_note = if package_hash_verified {
+        Some("Downloaded package matches the original published MCDF hash.".to_string())
+    } else {
+        Some(format!(
+            "Exchange rebuilt this MCDF from verified component files. The rebuilt container hash is {}, while the original package hash is {}. This is expected for component-based Exchange rebuilds: the internal game files are preserved, but the outer MCDF container may not be byte-for-byte identical.",
+            actual_package_hash,
+            record.package_hash_blake3
+        ))
+    };
     if let Some(parent) = Path::new(&output_path).parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -1594,6 +1613,9 @@ pub fn download_package_from_exchange_index(
         output_path,
         bytes_written: rebuilt.len() as u64,
         package_hash_blake3: record.package_hash_blake3,
+        rebuilt_package_hash_blake3: Some(actual_package_hash),
+        package_hash_verified,
+        download_note,
     })
 }
 
@@ -1616,6 +1638,9 @@ pub fn download_package_from_archive(
         output_path,
         bytes_written: bytes.len() as u64,
         package_hash_blake3: package_hash,
+        rebuilt_package_hash_blake3: None,
+        package_hash_verified: true,
+        download_note: Some("Downloaded package matches the requested archive package hash.".to_string()),
     })
 }
 
@@ -2671,6 +2696,45 @@ fn download_remote_mcdf_bytes(source_url: &str) -> Result<(Vec<u8>, Vec<String>)
         }
     }
     Err(format!("Failed to download a valid remote MCDF for temporary scan: {last_error}"))
+}
+
+
+#[command]
+pub fn download_remote_mcdf_to_file(
+    source_url: String,
+    output_path: String,
+    expected_package_hash: Option<String>,
+) -> Result<ArchiveDownloadResult, String> {
+    let source_url = source_url.trim();
+    if source_url.is_empty() {
+        return Err("Remote MCDF URL is required".to_string());
+    }
+    let (bytes, _download_notes) = download_remote_mcdf_bytes(source_url)?;
+    let package_hash = blake3::hash(&bytes).to_hex().to_string();
+    if let Some(expected) = expected_package_hash.as_ref().map(|value| value.trim().to_ascii_lowercase()).filter(|value| !value.is_empty()) {
+        if package_hash != expected {
+            return Err(format!(
+                "downloaded package hash mismatch: expected {}, got {}",
+                expected,
+                package_hash
+            ));
+        }
+    }
+    let output = PathBuf::from(&output_path);
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| format!("Failed to create download folder: {error}"))?;
+        }
+    }
+    fs::write(&output, &bytes).map_err(|error| format!("Failed to save downloaded MCDF: {error}"))?;
+    Ok(ArchiveDownloadResult {
+        output_path,
+        bytes_written: bytes.len() as u64,
+        package_hash_blake3: package_hash,
+        rebuilt_package_hash_blake3: None,
+        package_hash_verified: true,
+        download_note: Some("Downloaded package matches the requested archive package hash.".to_string()),
+    })
 }
 
 #[command]

@@ -1,3 +1,37 @@
+## fix185 - library/exchange table polish and browser-state reset
+
+- Prevent Library list-view action icons from overflowing the row.
+- Add clearer spacing between Creator and Files in the Exchange list header/table.
+- Add an Admin debug reset action for the WebView browser state, since deleting `.mcdf-manager` does not clear localStorage.
+
+## fix186 — GitHub landing README and stable latest links
+
+- Reworked the GitHub README into a product landing page with screenshot sections, clearer download links, and user-facing feature copy.
+- Added sanitized screenshots under `docs/screenshots/` for Library, Exchange, Analyze, and publisher registration.
+- Release packaging now also publishes stable `*-latest.zip` aliases for direct per-platform README download links.
+
+## fix181 - Add MCDF import layout
+
+- Reworked the Add MCDF modal so local file import is the clear left-side primary action.
+- Grouped Google Drive/direct URL and share-code/bulk import into one right-side internet import panel.
+- Kept progress and errors below both choices so the modal reads as one import workflow instead of three competing cards.
+
+## fix179 - Exchange component rebuild acceptance
+
+- Changed static Exchange component downloads so a rebuilt MCDF is accepted when all internal component blobs verify, even if the outer MCDF container hash differs from the original uploaded package hash.
+- Exact original package hash verification is still enforced for full archived-package downloads.
+- Download results now report both the canonical original package hash and the rebuilt container hash/note when they differ.
+- Updated the error helper text so older rebuilt-package mismatch logs explain the component-vs-container distinction.
+
+
+## fix178 - Library source sync and direct downloads
+
+- Added Library actions to download an MCDF directly from whatever source the entry has: local file, original Google Drive/direct URL, or static Exchange package manifest.
+- Added a separate Sync source action that downloads internet-backed entries into the local Library cache so they can be inspected and exported later.
+- Export now means export the synced/local Library file only; it no longer silently means download.
+- Remote source entries keep their source URL after syncing so they can be refreshed again later.
+- Improved the rebuilt-package hash mismatch error to explain that component rebuild metadata is not byte-identical and that a direct source download or full-package archive metadata is needed.
+
 
 ## fix177 - Layer modal and release-page polish
 
@@ -78,6 +112,12 @@
 - Clipped the Exchange detail hero image inside a framed preview container so zoomed cover crops do not spill or show too much image.
 
 # Changelog
+
+## fix182 - stable publisher id for owner edit
+
+- Owner edit/delete now sends the stable publisher id from the server-issued publisher certificate instead of the editable local profile username/display name.
+- Imported `.mcdfauth` packages now persist the publisher id explicitly so later profile renames do not orphan Exchange entries.
+- Exported auth packages keep the stable publisher id when available.
 
 ## fix166-exchange-cover-framing
 

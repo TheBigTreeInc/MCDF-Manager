@@ -269,8 +269,10 @@ jobs:
               *) display_platform="${platform}" ;;
             esac
             asset_name="MCDF-Manager-${display_platform}-v${RELEASE_VERSION}.zip"
-            echo "Packaging ${platform} as ${asset_name}"
+            latest_asset_name="MCDF-Manager-${display_platform}-latest.zip"
+            echo "Packaging ${platform} as ${asset_name} and ${latest_asset_name}"
             (cd "${artifact_dir}" && zip -qr "${GITHUB_WORKSPACE}/packaged-assets/${asset_name}" .)
+            cp "${GITHUB_WORKSPACE}/packaged-assets/${asset_name}" "${GITHUB_WORKSPACE}/packaged-assets/${latest_asset_name}"
           done
 
           test -n "$(find packaged-assets -maxdepth 1 -name '*.zip' -print -quit)"

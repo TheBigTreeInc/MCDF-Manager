@@ -446,6 +446,9 @@ type ArchiveDownloadResult = {
   output_path: string;
   bytes_written: number;
   package_hash_blake3: string;
+  rebuilt_package_hash_blake3?: string | null;
+  package_hash_verified?: boolean;
+  download_note?: string | null;
 };
 
 type ExportLocalMcdfResult = {
@@ -1565,20 +1568,62 @@ function savePublicProfile(profile: ReturnType<typeof readPublicProfile>) {
   window.dispatchEvent(new Event("mcdf-client-auth-changed"));
 }
 
+type StoredPublisherCertificate = {
+  publisher_id?: unknown;
+  username?: unknown;
+  display_name?: unknown;
+};
+
+function parsePublisherIdFromCertificate(certificate: string | null): string | null {
+  const value = certificate?.trim();
+  if (!value) return null;
+  const match = value.match(
+    /-----BEGIN MCDF PUBLISHER CERTIFICATE-----([\s\S]*?)-----END MCDF PUBLISHER CERTIFICATE-----/,
+  );
+  const jsonText = (match ? match[1] : value).trim();
+  try {
+    const parsed = JSON.parse(jsonText) as StoredPublisherCertificate;
+    const publisherId = String(parsed.publisher_id || "").trim();
+    if (publisherId) return publisherId;
+  } catch {
+    const fallback = jsonText.match(/"publisher_id"\s*:\s*"([^"]+)"/);
+    if (fallback?.[1]?.trim()) return fallback[1].trim();
+  }
+  return null;
+}
+
+function storedPublisherProofId(): string | null {
+  const stored = localStorage.getItem("mcdf.publisher.publisherId")?.trim();
+  if (stored) return stored;
+  const certificatePublisherId = parsePublisherIdFromCertificate(
+    localStorage.getItem("mcdf.publisher.certificate"),
+  );
+  if (certificatePublisherId) {
+    localStorage.setItem("mcdf.publisher.publisherId", certificatePublisherId);
+    return certificatePublisherId;
+  }
+  return (
+    localStorage.getItem("mcdf.publisher.username") ||
+    localStorage.getItem("mcdf.publisher.displayName") ||
+    null
+  );
+}
+
 function localPublisherAuthHeaders() {
+  const publisherCertificate = localStorage.getItem("mcdf.publisher.certificate") || null;
   return {
-    publisherId:
-      localStorage.getItem("mcdf.publisher.username") ||
-      localStorage.getItem("mcdf.publisher.displayName") ||
-      null,
+    // Owner edit/delete must use the stable publisher id from the server-issued
+    // certificate, not the editable profile username/display name. Otherwise a
+    // harmless profile rename can make entries created by this client look like
+    // they belong to another owner.
+    publisherId: storedPublisherProofId(),
     publisherDisplayName:
       localStorage.getItem("mcdf.publisher.displayName") ||
       localStorage.getItem("mcdf.publisher.username") ||
       null,
     publisherPublicKey:
       localStorage.getItem("mcdf.publisher.publicKey.spki") || null,
-    publisherCertificate:
-      localStorage.getItem("mcdf.publisher.certificate") || null,
+    publisherCertificate,
   };
 }
 function serviceLockedMessage(connected: boolean): string | null {
@@ -1739,7 +1784,6 @@ function writeLocalMcdfLibrary(entries: LocalMcdfEntry[]) {
 function localEntryHasLocalFile(entry: LocalMcdfEntry | null | undefined): boolean {
   return Boolean(
     entry &&
-      (entry.source_type === "local_file" || !entry.source_type) &&
       entry.local_path &&
       entry.storage_state !== "subscribed" &&
       entry.storage_state !== "removed",
@@ -1752,6 +1796,11 @@ function localEntryId(path: string): string {
 }
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
+}
+function safeDownloadFilename(name: string): string {
+  const trimmed = (name || "download.mcdf").replace(/\.mcdf$/i, "").trim();
+  const safe = trimmed.replace(/[<>:"\/\\|?*\u0000-\u001F]+/g, "-").replace(/\s+/g, " ").slice(0, 96).trim();
+  return `${safe || "download"}.mcdf`;
 }
 function stateLabel(state: LocalMcdfStorageState): string {
   if (state === "online") return "online";
@@ -2242,6 +2291,9 @@ function friendlyErrorSummary(error: string): string {
   if (normalized.includes("image") && normalized.includes("upload")) {
     return "Image upload failed.";
   }
+  if (normalized.includes("rebuilt package hash mismatch")) {
+    return "Exchange rebuild produced a different container hash.";
+  }
   return error.split("\n")[0] || error;
 }
 
@@ -2255,6 +2307,9 @@ function technicalReason(error: string): string {
   }
   if (normalized.includes("preview image could not be read") || normalized.includes("failed to read preview image")) {
     return "The selected preview path cannot be read by the app. The file may have moved, or the cached preview path may not exist.";
+  }
+  if (normalized.includes("rebuilt package hash mismatch")) {
+    return "The Exchange rebuild reproduced verified component files, but the outer MCDF container bytes did not match the original package hash. Component rebuilds are not expected to be byte-for-byte identical to the uploaded MCDF container.";
   }
   if (normalized.includes("central server") || normalized.includes("registry")) {
     return "The request reached the registry flow and the registry returned an error or could not be contacted.";
@@ -2279,6 +2334,9 @@ function likelyFix(error: string): string {
       "3. Confirm the preview renders in the library before publishing.",
       "4. Try publishing without the preview to separate image preparation from MCDF upload.",
     ].join("\n");
+  }
+  if (normalized.includes("rebuilt package hash mismatch")) {
+    return "Use the updated client. Component-based Exchange downloads should be accepted when all internal file hashes verify; exact original byte identity is only required for full archived-package downloads.";
   }
   return "Copy this error log and the current publish step into the issue/report so the failing layer can be identified.";
 }
@@ -3847,13 +3905,12 @@ function AddMcdfEntryModal({
           </button>
         </div>
         {step === "choose" ? (
-          <div className="add-entry-choice-panel add-entry-source-grid">
-            <div className="remote-add-card refined-source-card">
+          <div className="add-entry-choice-panel add-entry-intake-grid">
+            <div className="local-import-dropzone">
               <div className="eyebrow">Device file</div>
-              <h3>Choose an MCDF from this computer</h3>
+              <h3>Add an MCDF from this computer</h3>
               <p className="empty-small">
-                Adds a local library entry on this device. Registration is not
-                required.
+                Choose a local package to inspect, frame, tag, and keep in your Library.
               </p>
               <PrimaryButton
                 disabled={loading}
@@ -3863,46 +3920,47 @@ function AddMcdfEntryModal({
                 {loading ? "Reading MCDF…" : "Choose MCDF…"}
               </PrimaryButton>
             </div>
-            <div className="remote-add-card refined-source-card">
-              <div className="eyebrow">Remote source</div>
-              <h3>Add Google Drive or direct link</h3>
-              <Field
-                value={remoteUrl}
-                onChange={(e) => setRemoteUrl(e.target.value)}
-                placeholder="Google Drive or direct MCDF URL"
-              />
-              <Field
-                value={remotePreviewUrl}
-                onChange={(e) => setRemotePreviewUrl(e.target.value)}
-                placeholder="Preview image URL, optional"
-              />
-              <GhostButton
-                disabled={loading || !remoteUrl.trim()}
-                onClick={chooseRemoteMcdf}
-              >
-                {loading ? "Reading link…" : "Read link"}
-              </GhostButton>
-            </div>
-            <div className="remote-add-card refined-source-card">
-              <div className="eyebrow">Shared entries</div>
-              <h3>Import share codes or bulk links</h3>
-              <textarea
-                value={sharedImportText}
-                onChange={(e) => setSharedImportText(e.target.value)}
-                placeholder="mcdf.thebigtree.life:23147ff9...&#10;Paste one or more share codes, one per line"
-                rows={5}
-              />
-              <Field
-                value={sharedImportTag}
-                onChange={(e) => setSharedImportTag(e.target.value)}
-                placeholder="Optional tag for all imported entries"
-              />
-              <GhostButton
-                disabled={loading || !sharedImportText.trim()}
-                onClick={() => void importSharedEntries()}
-              >
-                {loading ? "Importing…" : "Import shared entries"}
-              </GhostButton>
+            <div className="online-import-panel">
+              <div className="eyebrow">Import from the internet</div>
+              <div className="online-import-group">
+                <h3>Google Drive or direct MCDF link</h3>
+                <Field
+                  value={remoteUrl}
+                  onChange={(e) => setRemoteUrl(e.target.value)}
+                  placeholder="Google Drive or direct MCDF URL"
+                />
+                <Field
+                  value={remotePreviewUrl}
+                  onChange={(e) => setRemotePreviewUrl(e.target.value)}
+                  placeholder="Preview image URL, optional"
+                />
+                <GhostButton
+                  disabled={loading || !remoteUrl.trim()}
+                  onClick={chooseRemoteMcdf}
+                >
+                  {loading ? "Reading link…" : "Read link"}
+                </GhostButton>
+              </div>
+              <div className="online-import-group">
+                <h3>Share code or bulk import</h3>
+                <textarea
+                  value={sharedImportText}
+                  onChange={(e) => setSharedImportText(e.target.value)}
+                  placeholder="mcdf.thebigtree.life:23147ff9...&#10;Paste one or more share codes, one per line"
+                  rows={4}
+                />
+                <Field
+                  value={sharedImportTag}
+                  onChange={(e) => setSharedImportTag(e.target.value)}
+                  placeholder="Optional tag for all imported entries"
+                />
+                <GhostButton
+                  disabled={loading || !sharedImportText.trim()}
+                  onClick={() => void importSharedEntries()}
+                >
+                  {loading ? "Importing…" : "Import shared entries"}
+                </GhostButton>
+              </div>
             </div>
             <div className="add-entry-progress-row">
               <AnalyzeProgressBar progress={progress} />
@@ -4839,6 +4897,196 @@ function OnlineLibraryPanel({
     }
   };
 
+  const entryCanSyncSource = (entry: LocalMcdfEntry): boolean => {
+    if (entry.storage_state === "removed") return false;
+    if (entry.source_url && entry.source_type !== "local_file") return true;
+    return Boolean(
+      entry.storage_state === "subscribed" &&
+        (entry.download_url || entry.manifest_url),
+    );
+  };
+
+  const entryCanDownloadDirect = (entry: LocalMcdfEntry): boolean =>
+    Boolean(
+      localEntryHasLocalFile(entry) ||
+        (entry.source_url && entry.source_type !== "local_file") ||
+        (entry.storage_state === "subscribed" &&
+          (entry.download_url || entry.manifest_url)),
+    );
+
+  const downloadEntryToPath = async (
+    entry: LocalMcdfEntry,
+    outputPath: string,
+  ): Promise<ArchiveDownloadResult> => {
+    if (entry.source_url && entry.source_type !== "local_file") {
+      return invoke<ArchiveDownloadResult>("download_remote_mcdf_to_file", {
+        sourceUrl: entry.source_url,
+        outputPath,
+        expectedPackageHash: entry.package_hash_blake3 || null,
+      });
+    }
+    if (localEntryHasLocalFile(entry)) {
+      const exported = await invoke<ExportLocalMcdfResult>("export_local_mcdf_file", {
+        sourcePath: entry.local_path,
+        outputPath,
+      });
+      return {
+        output_path: exported.output_path,
+        bytes_written: exported.bytes_written,
+        package_hash_blake3: entry.package_hash_blake3 || "",
+      };
+    }
+    const manifestPath = entry.download_url || entry.manifest_url || "";
+    if (entry.storage_state === "subscribed" && manifestPath) {
+      return invoke<ArchiveDownloadResult>("download_package_from_exchange_index", {
+        indexUrl,
+        packageManifestPath: manifestPath,
+        serverUrl: configuredArchiveHost(),
+        outputPath,
+      });
+    }
+    throw new Error(
+      "This library entry has no local file, remote source, or downloadable Exchange manifest.",
+    );
+  };
+
+  const directDownloadEntry = async (entry: LocalMcdfEntry) => {
+    if (!entryCanDownloadDirect(entry)) {
+      setError("This library entry does not include a downloadable source yet.");
+      return;
+    }
+    const selected = await save({
+      defaultPath: safeDownloadFilename(entry.original_filename || entry.title),
+      filters: [{ name: "MCDF", extensions: ["mcdf"] }],
+    });
+    if (!selected || Array.isArray(selected)) return;
+    const opId = addOperation({
+      kind: "download",
+      label: `Download ${entry.title || entry.original_filename}`,
+      stage: {
+        percent: 25,
+        label: "Downloading MCDF",
+        detail: entry.source_url
+          ? "Downloading from the original internet source."
+          : localEntryHasLocalFile(entry)
+            ? "Copying from the local library source."
+            : "Downloading from the static Exchange package manifest.",
+      },
+    });
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await downloadEntryToPath(entry, selected);
+      finishOperation(opId, {
+        status: "done",
+        bytesDone: result.bytes_written,
+        bytesTotal: result.bytes_written,
+        message: `Downloaded to ${result.output_path}`,
+        stage: { percent: 100, label: "Download complete", detail: formatBytes(result.bytes_written) },
+      });
+      setActionMessage(
+        result.download_note
+          ? `Downloaded MCDF to ${result.output_path}. ${result.download_note}`
+          : `Downloaded MCDF to ${result.output_path}`,
+      );
+    } catch (e) {
+      const message = String(e);
+      finishOperation(opId, {
+        status: "failed",
+        message,
+        stage: { percent: 100, label: "Download failed", detail: message },
+      });
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const syncLibraryEntrySource = async (entry: LocalMcdfEntry) => {
+    if (!entryCanSyncSource(entry)) {
+      setError("This entry has no internet source to sync.");
+      return;
+    }
+    const cacheDir = await invoke<string>("get_cache_dir");
+    const cacheName = safeDownloadFilename(
+      `${entry.package_hash_blake3?.slice(0, 12) || entry.id}-${entry.original_filename || entry.title}`,
+    );
+    const outputPath = `${cacheDir}/synced-packages/${cacheName}`;
+    const opId = addOperation({
+      kind: "sync",
+      label: `Sync ${entry.title || entry.original_filename}`,
+      stage: {
+        percent: 20,
+        label: "Syncing source",
+        detail: entry.source_url
+          ? "Downloading the original internet source into the local library cache."
+          : "Downloading the Exchange package into the local library cache.",
+      },
+    });
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await downloadEntryToPath(entry, outputPath);
+      const [info, files] = await Promise.all([
+        invoke<MCDFInfo>("scan_mcdf", { path: result.output_path }),
+        invoke<ExtractedFileInfo[]>("inspect_mcdf_files", { path: result.output_path }),
+      ]);
+      const syncedEntry: LocalMcdfEntry = {
+        ...entry,
+        id: entry.id.startsWith("subscribed-") || entry.id.startsWith("removed-")
+          ? localEntryId(result.output_path)
+          : entry.id,
+        local_path: result.output_path,
+        remote_annotation: entry.source_url
+          ? "Synced from the original internet source. The source URL is still kept for future refreshes."
+          : "Synced from the public Exchange package manifest.",
+        storage_state: "online",
+        last_checked_at: new Date().toISOString(),
+        description: entry.description || info.description || "",
+        package_hash_blake3: result.package_hash_blake3 || entry.package_hash_blake3,
+        file_count: files.length,
+        total_file_bytes: files.reduce((sum, file) => sum + file.length, 0),
+        component_kinds: kindsFromExtractedFiles(files),
+        file_manifest: fileManifestFromExtractedFiles(files),
+        notes: [
+          `Synced source to ${result.output_path}`,
+          ...(entry.notes || []),
+        ],
+      };
+      const nextPackageSubscriptions = entry.package_hash_blake3
+        ? packageSubscriptions.filter((hash) => hash !== entry.package_hash_blake3)
+        : packageSubscriptions;
+      if (nextPackageSubscriptions !== packageSubscriptions) {
+        setPackageSubscriptions(nextPackageSubscriptions);
+        writePackageSubscriptions(nextPackageSubscriptions);
+        if (entry.package_hash_blake3) removePackageSubscriptionSnapshot(entry.package_hash_blake3);
+      }
+      saveEntries([
+        syncedEntry,
+        ...entries.filter((item) => item.id !== syncedEntry.id),
+      ]);
+      setSelectedId(syncedEntry.id);
+      finishOperation(opId, {
+        status: "done",
+        bytesDone: result.bytes_written,
+        bytesTotal: result.bytes_written,
+        message: `Synced to ${result.output_path}`,
+        stage: { percent: 100, label: "Sync complete", detail: formatBytes(result.bytes_written) },
+      });
+      setActionMessage(`Synced MCDF source to ${result.output_path}`);
+    } catch (e) {
+      const message = String(e);
+      finishOperation(opId, {
+        status: "failed",
+        message,
+        stage: { percent: 100, label: "Sync failed", detail: message },
+      });
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const shareEntry = async (entry: LocalMcdfEntry) => {
     if (!entryHasPublicExchangeRecord(entry)) {
       setError("Only public Exchange entries can be shared from this action.");
@@ -4855,13 +5103,9 @@ function OnlineLibraryPanel({
   };
 
   const exportLocalEntry = async (entry: LocalMcdfEntry) => {
-    if (entry.storage_state === "subscribed") {
-      await downloadSubscribedEntry(entry);
-      return;
-    }
     if (!entryHasLocalFile(entry)) {
       setError(
-        "This library entry does not have a local MCDF file to export yet.",
+        "This library entry has not been synced to this machine yet. Use Sync source first, or use Download MCDF to save directly from its source.",
       );
       return;
     }
@@ -4957,15 +5201,24 @@ function OnlineLibraryPanel({
         <SvgIcon name="open-location" />
       </IconButton>
       <IconButton
-        label={
-          entry.storage_state === "subscribed"
-            ? "Download MCDF from Exchange"
-            : "Export MCDF from library"
-        }
-        disabled={
-          loading ||
-          (!entryHasLocalFile(entry) && entry.storage_state !== "subscribed")
-        }
+        label="Download MCDF directly"
+        disabled={loading || !entryCanDownloadDirect(entry)}
+        className="library-action-button"
+        onClick={() => void directDownloadEntry(entry)}
+      >
+        <SvgIcon name="download" />
+      </IconButton>
+      <IconButton
+        label="Sync internet source to this library"
+        disabled={loading || !entryCanSyncSource(entry)}
+        className="library-action-button"
+        onClick={() => void syncLibraryEntrySource(entry)}
+      >
+        <SvgIcon name="sync" />
+      </IconButton>
+      <IconButton
+        label="Export synced/local MCDF from library"
+        disabled={loading || !entryHasLocalFile(entry)}
         className="library-action-button"
         onClick={() => void exportLocalEntry(entry)}
       >
@@ -5999,8 +6252,8 @@ function OnlineLibraryPanel({
               <div>
                 <div className="eyebrow">Entry actions</div>
                 <p className="empty-small">
-                  Share public Exchange entries, export or download the MCDF,
-                  publish updates, or remove the local record.
+                  Share public Exchange entries, download directly from any source,
+                  sync internet sources into the Library, export local MCDFs, publish updates, or remove the record.
                 </p>
               </div>
               <LibraryEntryActions entry={selectedEntry} />
@@ -6016,16 +6269,13 @@ function OnlineLibraryPanel({
                 <div className="font-semibold">Subscribed online MCDF</div>
                 <p className="empty-small">
                   This Exchange item is tracked in My Library locally, but the
-                  MCDF has not been downloaded yet. Downloading public entries
-                  does not require connecting to the archive service; server
-                  connection is only needed for private requests, reports, admin
-                  actions, or cloud-sync later.
+                  MCDF has not been synced to this machine yet. Use Sync source to cache it inside the Library, or Download MCDF to save a direct copy without changing the Library record.
                 </p>
                 <PrimaryButton
                   disabled={loading}
-                  onClick={() => void downloadSubscribedEntry()}
+                  onClick={() => void syncLibraryEntrySource(selectedEntry)}
                 >
-                  {loading ? "Downloading…" : "Download MCDF"}
+                  {loading ? "Syncing…" : "Sync source"}
                 </PrimaryButton>
               </div>
             )}
@@ -6183,6 +6433,7 @@ function SharedArchiveConnectModal({
         "mcdf.publisher.certificate",
         authPackage.certificate,
       );
+      localStorage.setItem("mcdf.publisher.publisherId", authPackage.publisher_id);
       localStorage.setItem(
         "mcdf.publisher.username",
         authPackage.username || authPackage.publisher_id,
@@ -6271,6 +6522,7 @@ function SharedArchiveConnectModal({
           "mcdf.publisher.certificate",
           identity.certificate || "",
         );
+        localStorage.setItem("mcdf.publisher.publisherId", identity.publisher_id);
         setPublisherIdentity(identity);
         notifyClientAuthChanged();
       }
@@ -7264,6 +7516,11 @@ function SettingsPanel({
         publisherIdentity?.publisher_id ||
         publisherUsername ||
         "publisher";
+      const publisherId =
+        localStorage.getItem("mcdf.publisher.publisherId") ||
+        publisherIdentity?.publisher_id ||
+        parsePublisherIdFromCertificate(certificate) ||
+        username;
       const displayName =
         localStorage.getItem("mcdf.publisher.displayName") ||
         publisherIdentity?.display_name ||
@@ -7287,7 +7544,7 @@ function SettingsPanel({
         exported_at: new Date().toISOString(),
         archive_host: serverUrl,
         archive_endpoint: archiveEndpoint,
-        publisher_id: publisherIdentity?.publisher_id || username,
+        publisher_id: publisherId,
         username,
         display_name: displayName,
         public_key: publicKey,
@@ -7339,6 +7596,7 @@ function SettingsPanel({
         "mcdf.publisher.certificate",
         authPackage.certificate,
       );
+      localStorage.setItem("mcdf.publisher.publisherId", authPackage.publisher_id);
       localStorage.setItem(
         "mcdf.publisher.username",
         authPackage.username || authPackage.publisher_id,
@@ -8677,7 +8935,25 @@ function SystemAdminPanel({
           >
             Disable fake data
           </GhostButton>
+          <GhostButton
+            className="danger"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Clear MCDF Manager browser state on this machine? This removes saved Library entries, fake-data toggles, favorites, publisher auth, and UI settings from this WebView profile. It does not delete files from disk or the registry.",
+                )
+              ) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}
+          >
+            Reset client browser state
+          </GhostButton>
         </div>
+        <p className="debug-danger-note">
+          Deleting <code>.mcdf-manager</code> removes file caches. The Library list, favorites, fake-data toggles, and publisher profile are stored in the app WebView browser state, so use reset when you want a fully clean client.
+        </p>
       </Panel>
 
       {!adminToken.trim() && (
@@ -10785,8 +11061,11 @@ function PublishedIndexPanel({
               )}
               {downloadResult && (
                 <SuccessBox>
-                  <div>Downloaded rebuilt MCDF to:</div>
+                  <div>Downloaded MCDF to:</div>
                   <div className="path-block">{downloadResult.output_path}</div>
+                  {downloadResult.download_note && (
+                    <p className="empty-small mt-2">{downloadResult.download_note}</p>
+                  )}
                 </SuccessBox>
               )}
               {cacheInspection && (
