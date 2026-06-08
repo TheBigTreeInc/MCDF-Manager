@@ -1,4 +1,86 @@
+
+## fix176 - Exchange detail drawer scroll containment
+
+- Fixed the Exchange detail drawer so it has one internal vertical scrollbar instead of nested scrollbars.
+- Prevented horizontal overflow in the detail drawer, including long titles, hashes, tags, and action bars.
+- Kept the surrounding Exchange grid from becoming a second scroll target while details are open.
+
+## fix174 - Admin debug fake data and top-bar cleanup
+
+
+## fix175 - Exchange/library browser chrome and detail overlay
+
+- Removed the duplicate Exchange page title/eyebrow and the entries shown/indexed/date strip from the Exchange browse view.
+- Removed the duplicate Library results heading/status strip so the global page title carries the page identity.
+- Converted Exchange details into a fixed right-side overlay so closing details restores the full browse grid immediately.
+- Made the Exchange detail pane independently scrollable for long entries and large result sets.
+- Tightened Library and Exchange filter/search controls into a flatter integrated toolbar with less-rounded controls.
+
+- Added Admin → Debug settings for local-only fake Exchange and Library data.
+- Added toggles and counts for generating 200 fake Exchange entries and 200 fake Library entries on demand.
+- Fake entries are generated client-side only and are not written to the registry or real Library store.
+- Removed the three top-bar star ornaments so the chrome is quieter until a better ornament is chosen.
+
+## fix172 - Custom icon set integration
+
+- Added the fantasy/glamour SVG icon set to `public/icons`.
+- Added a shared `SvgIcon` component that renders from the bundled sprite using current-color styling.
+- Replaced the main sidebar, top bar, window controls, notification bell, preview placeholders, framing controls, Library action buttons, Exchange cards/table actions, and Exchange detail action bar glyphs with the new SVG icons.
+- Replaced first-letter component badges with file/component type icons where component kinds are shown.
+
+
+## fix173 - Exchange image path and follow cleanup
+
+- Restored static public-index preview image resolution to keep the `public/` asset base, so Exchange card/detail images load from the mirror without touching the live registry server.
+- Reverted the top-bar Add and notification controls to the previous lightweight glyph styling.
+- Removed creator-follow actions from the Exchange browsing/detail UI; Exchange now keeps favorite and track-entry actions only.
+
+## fix171 - Exchange detail pane cleanup
+
+- Applied saved Exchange preview crop metadata to fetched package details even when the package record lags behind the index summary.
+- Reworked the Exchange details pane preview so the framed cover uses the same clipping and positioning as the edit/listing preview.
+- Replaced the old metric cards and creator-entry count with a compact details table.
+- Replaced the long row of action buttons with a compact icon action bar with tooltips.
+
+## fix170 - Static Exchange asset loading
+
+- Reverted the live registry preview-image fallback from Exchange browsing.
+- Exchange cards and detail previews now resolve relative preview assets only from the configured static public index location.
+- Documented that the live registry host is for publishing, owner edits, deletion, moderation, and other management actions, not normal Exchange image/data retrieval.
+
+## fix169 - Exchange preview endpoint fallback
+
+- Fixed Exchange preview rendering when the public index contains a relative preview path but the image is available from the live registry endpoint before GitHub/raw index propagation catches up.
+- Exchange cards, detail previews, and owner edit covers now try the live registry preview URL first and fall back to the public index asset URL.
+- Normalized public asset paths so older `public/previews/...` entries do not become duplicated as `public/public/previews/...`.
+
+## fix168 - Quiet Exchange edit studio
+
+- Removed the oversized Exchange edit hero copy and first-impression help text from the owner edit modal.
+- Changed the right-side edit fields into one unified form surface instead of separate nested panels.
+- Removed visibility and 18+ editing from the owner listing edit view; save now preserves the existing server values for those fields.
+- Simplified Exchange cover actions so replacing the cover and framing the current cover are clearly separate. The cover itself opens the shared Library/Add MCDF framing modal.
+- Removed equivalent noisy Add MCDF review copy and duplicate choose-picture action so Library entry creation keeps the same quieter preview pattern.
+- Tightened modal sizing to avoid unnecessary scrollbars in normal entry/edit layouts.
+
+
+## fix167 - Exchange cover framing parity
+
+- Changed the Exchange owner edit cover from a plain image box to the same click-to-frame picture surface used by Add MCDF and Library previews.
+- Replacing an Exchange cover now opens the framing modal immediately so the creator can crop/position the image before saving.
+- Clipped the Exchange detail hero image inside a framed preview container so zoomed cover crops do not spill or show too much image.
+
 # Changelog
+
+## fix166-exchange-cover-framing
+
+### Added
+- Exchange listings now carry preview framing metadata so Exchange covers can be positioned and zoomed like Library covers.
+- The Exchange owner edit modal has a Frame cover action that opens the same drag/zoom framing modal used by the Library preview.
+
+### Changed
+- Exchange cards, the owner edit cover preview, and the Exchange detail hero apply the stored preview crop instead of always forcing a center crop.
+- Publishing from a local Library entry now sends that entry's preview framing metadata to the registry server.
 
 ## fix165-rust-upload-parameter-build
 

@@ -1,0 +1,10 @@
+<svg class="mcdf-icon mcdf-icon--fantasy-glamour" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-label="Restore">
+  <rect x="3.5" y="6.5" width="11" height="11" rx="1.5" />
+  <rect class="icon-accent" x="9.5" y="3.5" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity="0.15" stroke="currentColor" />
+
+  <g class="icon-glamour" opacity="0.52" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5.1 17.8v2.8" stroke-width="1.25" />
+    <path d="M3.7 19.2h2.8" stroke-width="1.25" />
+    <circle cx="7.8" cy="16.8" r="0.5" fill="currentColor" stroke="none" opacity="0.5" />
+  </g>
+</svg>

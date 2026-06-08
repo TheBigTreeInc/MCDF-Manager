@@ -1,0 +1,12 @@
+[
+  "adult",
+  "connected",
+  "disconnected",
+  "error",
+  "loading",
+  "local-only",
+  "public",
+  "restricted",
+  "success",
+  "warning"
+]

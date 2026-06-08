@@ -1,0 +1,13 @@
+<svg class="mcdf-icon mcdf-icon--fantasy-glamour" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-label="Report listing">
+  <path d="M4 21V4h13l-2.5 4L17 12H4" />
+  <line class="icon-accent" x1="8" y1="7" x2="8" y2="9.5" stroke="currentColor" opacity="0.7" />
+  <circle class="icon-accent" cx="8" cy="11" r="0.5" fill="currentColor" stroke="none" opacity="0.7" />
+
+  <path class="icon-aura" d="M5.5 20.5c3-1.7 10-1.7 13 0" opacity="0.16" />
+
+  <g class="icon-glamour" opacity="0.58" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.5 2.8v3.1" stroke-width="1.35" />
+    <path d="M16.95 4.35h3.1" stroke-width="1.35" />
+    <circle cx="20.8" cy="6.9" r="0.55" fill="currentColor" stroke="none" opacity="0.55" />
+  </g>
+</svg>

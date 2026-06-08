@@ -302,3 +302,8 @@ The Library detail view can open a table-style MCDF layer inventory. The table s
 - The Eorzea Exchange no longer shows internal MCDF component snippets in normal browsing cards/details.
 - Favorites and follows are local saved lists that can be reviewed in Settings.
 - Settings now shows how much local disk space MCDF Manager uses for the app home, library, Exchange cache, and downloads.
+
+
+## Build note
+
+fix173 keeps Exchange browsing on the static public index/mirror path. The live registry server remains for management actions such as publish, edit, delete, auth, and moderation.

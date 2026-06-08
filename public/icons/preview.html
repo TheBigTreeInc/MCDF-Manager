@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fantasy Glamour Icon Set Preview</title>
+<style>
+  :root {
+    --bg: #100d1c;
+    --bg-elev: #191329;
+    --bg-soft: #241b38;
+    --fg: #f4edf8;
+    --fg-dim: #9aa4b2;
+    --accent: #d7b66d;
+    --accent-2: #c48cff;
+    --warn: #ffb86b;
+    --error: #ff6b6b;
+    --border: #2a3140;
+    --radius: 10px;
+  }
+  .light {
+    --bg: #f7f8fa;
+    --bg-elev: #ffffff;
+    --bg-soft: #eef1f5;
+    --fg: #1a2030;
+    --fg-dim: #5a6478;
+    --accent: #2b6cff;
+    --accent-2: #1a9b8a;
+    --warn: #d97a1f;
+    --error: #d63d3d;
+    --border: #d9dde5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.5;
+  }
+  header {
+    padding: 32px 40px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 22px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  header p {
+    margin: 0;
+    color: var(--fg-dim);
+    font-size: 14px;
+  }
+  .toolbar {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toolbar button, .toolbar select {
+    background: var(--bg-soft);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .toolbar button:hover { background: var(--bg-elev); }
+  .toolbar .accent { color: var(--accent); }
+  main { padding: 24px 40px 80px; }
+  section { margin-top: 36px; }
+  section h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    margin: 0 0 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section h2 .count {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    transition: transform .12s ease, border-color .12s ease;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .icon-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: var(--fg);
+    height: 44px;
+  }
+  .icon-row .swatch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+  }
+  .icon-row .swatch.alt { color: var(--accent-2); }
+  .icon-row .swatch.warn { color: var(--warn); }
+  .icon-row .swatch.error { color: var(--error); }
+  .name {
+    font-size: 12px;
+    color: var(--fg-dim);
+    text-align: center;
+    word-break: break-word;
+  }
+  .name code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--fg);
+  }
+  .meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .size-strip {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--fg-dim);
+  }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--fg);
+    color: var(--bg);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity .2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  footer {
+    padding: 32px 40px 60px;
+    color: var(--fg-dim);
+    font-size: 12.5px;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+  footer code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg-soft);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .controls label {
+    font-size: 12px;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .controls input[type="range"] { width: 110px; }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Fantasy Glamour Icon Set</h1>
+      <p id="subtitle">78 SVG icons · 24×24 viewBox · monochrome + duotone accents</p>
+    </div>
+    <div class="toolbar">
+      <div class="controls">
+        <label>Size <input id="size" type="range" min="14" max="40" value="24" /></label>
+        <label><input id="showSize" type="checkbox" checked /> Sizes</label>
+        <label><input id="showAccent" type="checkbox" checked /> Accent</label>
+      </div>
+      <button id="themeBtn" title="Toggle theme">Toggle theme</button>
+    </div>
+  </header>
+  <main id="root"></main>
+  <div class="toast" id="toast">Copied SVG markup</div>
+  <footer>
+    <p>
+      All icons share a 24×24 viewBox with a 1.75px stroke, round caps &amp; joins,
+      and use <code>stroke="currentColor"</code> so the surrounding <code>color</code> /
+      CSS <code>fill</code> drives the look. The optional <code>.icon-accent</code> class
+      on inner shapes is the duotone hook — color it with <code>fill: var(--accent-2)</code>
+      or <code>opacity</code>.
+    </p>
+    <p>
+      Click a card to copy the SVG markup. Use at 16, 20, 24, or 32 px; the geometry is
+      tuned to read cleanly down to 16.
+    </p>
+  </footer>
+
+<script>
+  const ICON_BASE = './';
+  const ACCENT_COLOR = '#5dd0c2';
+  const ALT_COLOR = '#7aa2ff';
+  const WARN_COLOR = '#ffb86b';
+  const ERROR_COLOR = '#ff6b6b';
+
+  const groups = [
+    { name: 'Core navigation', dir: 'core-navigation' },
+    { name: 'Global actions', dir: 'global-actions' },
+    { name: 'MCDF actions', dir: 'mcdf-actions' },
+    { name: 'Exchange actions', dir: 'exchange-actions' },
+    { name: 'Status markers', dir: 'status' },
+    { name: 'Preview & image', dir: 'preview' },
+    { name: 'File & component types', dir: 'file-types' },
+    { name: 'Admin & moderation', dir: 'admin' },
+  ];
+
+  const tintByDir = {
+    'core-navigation': 'alt',
+    'global-actions': 'alt',
+    'mcdf-actions': 'alt',
+    'exchange-actions': '',
+    'status': '',
+    'preview': '',
+    'file-types': 'alt',
+    'admin': 'warn',
+  };
+
+  const tintByFile = {
+    'warning': 'warn',
+    'error': 'error',
+    'report-listing': 'warn',
+    'admin-remove': 'error',
+    'block-hash': 'error',
+    'blocklist': 'error',
+    'restricted': 'warn',
+    'success': 'alt',
+  };
+
+  const main = document.getElementById('root');
+  const toast = document.getElementById('toast');
+  const sizeInput = document.getElementById('size');
+  const showSizeCb = document.getElementById('showSize');
+  const showAccentCb = document.getElementById('showAccent');
+  const themeBtn = document.getElementById('themeBtn');
+
+  let cache = {};
+  let fileToDir = {};
+  let total = 0;
+
+  function swatchClass(file, dir) {
+    if (tintByFile[file]) return tintByFile[file];
+    return tintByDir[dir] || '';
+  }
+
+  async function loadIcons() {
+    for (const g of groups) {
+      const res = await fetch(ICON_BASE + g.dir + '/manifest.json').catch(() => null);
+      let list = [];
+      if (res && res.ok) {
+        list = await res.json();
+      } else {
+        // fallback: skip if no manifest
+        continue;
+      }
+      cache[g.dir] = list;
+      for (const f of list) fileToDir[f] = g.dir;
+      total += list.length;
+    }
+    document.getElementById('subtitle').textContent =
+      `${total} SVG icons · 24×24 viewBox · monochrome + duotone accents`;
+    render();
+  }
+
+  function render() {
+    main.innerHTML = '';
+    const size = parseInt(sizeInput.value, 10);
+    for (const g of groups) {
+      const list = cache[g.dir];
+      if (!list || !list.length) continue;
+      const sec = document.createElement('section');
+      sec.innerHTML = `<h2>${g.name} <span class="count">${list.length}</span></h2>`;
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      for (const file of list) {
+        const card = document.createElement('button');
+        card.className = 'card';
+        card.style.background = 'var(--bg-elev)';
+        card.style.color = 'var(--fg)';
+        card.style.font = 'inherit';
+        card.style.cursor = 'pointer';
+        const tint = swatchClass(file, g.dir);
+        const accent = showAccentCb.checked ? (tint === 'warn' ? WARN_COLOR : tint === 'error' ? ERROR_COLOR : ACCENT_COLOR) : '';
+        card.innerHTML = `
+          <div class="icon-row" data-tint="${tint}" data-accent="${accent}">
+            <div class="swatch" data-size="16">${iconAt(file, 16, tint, accent)}</div>
+            ${showSizeCb.checked ? `
+              <div class="swatch" data-size="20">${iconAt(file, 20, tint, accent)}</div>
+              <div class="swatch" data-size="24">${iconAt(file, 24, tint, accent)}</div>
+              <div class="swatch" data-size="32">${iconAt(file, 32, tint, accent)}</div>
+            ` : `<div class="swatch" data-size="${size}">${iconAt(file, size, tint, accent)}</div>`}
+          </div>
+          <div class="name"><code>${file}</code></div>
+        `;
+        card.addEventListener('click', () => copySvg(file, g.dir));
+        grid.appendChild(card);
+      }
+      sec.appendChild(grid);
+      main.appendChild(sec);
+    }
+  }
+
+  function iconAt(file, size, tint, accent) {
+    // Inline the cached SVG and override its size
+    return `<img src="${ICON_BASE}${groups.find(g => g.dir === cacheDirFor(file)).dir}/${file}.svg" width="${size}" height="${size}" style="display:block" data-size="${size}" />`;
+  }
+
+  function cacheDirFor(file) { return fileToDir[file]; }
+
+  async function copySvg(file, dir) {
+    const res = await fetch(ICON_BASE + dir + '/' + file + '.svg');
+    const text = await res.text();
+    await navigator.clipboard.writeText(text);
+    toast.classList.add('show');
+    clearTimeout(window.__t);
+    window.__t = setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  sizeInput.addEventListener('input', () => {
+    // re-render with default size only
+    render();
+  });
+  showSizeCb.addEventListener('change', render);
+  showAccentCb.addEventListener('change', render);
+  themeBtn.addEventListener('click', () => document.body.classList.toggle('light'));
+
+  loadIcons();
+</script>
+</body>
+</html>

@@ -700,6 +700,16 @@ pub struct RegisterIdentityRequest {
     pub label: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PreviewCropData {
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    #[serde(default)]
+    pub scale: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicPackageRecord {
     pub schema_version: u32,
@@ -713,6 +723,8 @@ pub struct PublicPackageRecord {
     pub tags: Vec<String>,
     #[serde(default)]
     pub preview_image_path: Option<String>,
+    #[serde(default)]
+    pub preview_crop: Option<PreviewCropData>,
     #[serde(default)]
     pub is_adult: bool,
     #[serde(default)]
@@ -915,6 +927,8 @@ pub struct PublicIndexPackageSummary {
     #[serde(default)]
     pub preview_image_path: Option<String>,
     #[serde(default)]
+    pub preview_crop: Option<PreviewCropData>,
+    #[serde(default)]
     pub is_adult: bool,
     #[serde(default)]
     pub visibility: Option<String>,
@@ -955,6 +969,8 @@ pub struct PackageMarketplaceMetadata {
     pub tags: Vec<String>,
     #[serde(default)]
     pub preview_image: Option<PackagePreviewImage>,
+    #[serde(default)]
+    pub preview_crop: Option<PreviewCropData>,
     #[serde(default)]
     pub is_adult: bool,
     #[serde(default)]
@@ -1919,6 +1935,7 @@ pub fn edit_exchange_entry(
     is_adult: Option<bool>,
     visibility: Option<String>,
     preview_image_path: Option<String>,
+    preview_crop: Option<PreviewCropData>,
     publisher_id: Option<String>,
     publisher_display_name: Option<String>,
     publisher_public_key: Option<String>,
@@ -1959,6 +1976,7 @@ pub fn edit_exchange_entry(
         "is_adult": is_adult,
         "visibility": visibility,
         "preview_image": preview_image,
+        "preview_crop": preview_crop,
         "reason": "Edited from MCDF Manager",
     });
     let mut request = client.post(format!("{base}/v1/packages/{}/metadata", package_hash_blake3)).json(&payload);
@@ -2129,6 +2147,7 @@ pub fn upload_mcdf_to_central_server(
     description: Option<String>,
     tags: Option<Vec<String>>,
     preview_image_path: Option<String>,
+    preview_crop: Option<PreviewCropData>,
     is_adult: Option<bool>,
     visibility: Option<String>,
     publisher_id: Option<String>,
@@ -2143,7 +2162,7 @@ pub fn upload_mcdf_to_central_server(
         .and_then(|value| value.to_str())
         .unwrap_or("upload.mcdf")
         .to_string();
-    let mut marketplace = build_marketplace_metadata(title, description, tags.unwrap_or_default(), preview_image_path, is_adult.unwrap_or(false))?;
+    let mut marketplace = build_marketplace_metadata(title, description, tags.unwrap_or_default(), preview_image_path, preview_crop, is_adult.unwrap_or(false))?;
     marketplace.visibility = visibility
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| matches!(value.as_str(), "public" | "locked" | "private"));
@@ -2188,6 +2207,7 @@ fn build_marketplace_metadata(
     description: Option<String>,
     tags: Vec<String>,
     preview_image_path: Option<String>,
+    preview_crop: Option<PreviewCropData>,
     is_adult: bool,
 ) -> Result<PackageMarketplaceMetadata, String> {
     let cleaned_tags = tags
@@ -2221,6 +2241,7 @@ fn build_marketplace_metadata(
         description: description.and_then(|value| { let value = value.trim().to_string(); (!value.is_empty()).then_some(value) }),
         tags: cleaned_tags,
         preview_image,
+        preview_crop,
         is_adult,
         visibility: None,
     })

@@ -25,6 +25,108 @@ type Tab =
   | "admin";
 type OperationKind = "upload" | "download" | "scan" | "build";
 type OperationStatus = "running" | "done" | "failed";
+type McdfIconName =
+  | "access-requests"
+  | "block-hash"
+  | "blocklist"
+  | "moderation-queue"
+  | "public-index"
+  | "publisher-certificate"
+  | "registry-server"
+  | "unblock"
+  | "user-creator"
+  | "admin"
+  | "analyze"
+  | "exchange"
+  | "inspect"
+  | "library"
+  | "settings"
+  | "star-decoration"
+  | "add-to-library"
+  | "admin-remove"
+  | "adult-marker"
+  | "delete-listing"
+  | "edit-listing"
+  | "favorite-empty"
+  | "favorite-filled"
+  | "follow-creator"
+  | "following-creator"
+  | "in-library"
+  | "not-following"
+  | "report-listing"
+  | "animation"
+  | "hash-chunk"
+  | "material"
+  | "mcdf-package"
+  | "metadata"
+  | "model"
+  | "pose"
+  | "skeleton"
+  | "texture"
+  | "unknown"
+  | "add"
+  | "cancel"
+  | "close"
+  | "maximize"
+  | "minimize"
+  | "notifications"
+  | "refresh"
+  | "restore"
+  | "save"
+  | "sync"
+  | "transfers"
+  | "add-from-folder"
+  | "add-from-link"
+  | "download"
+  | "export"
+  | "folder"
+  | "import"
+  | "open-location"
+  | "publish"
+  | "remove-local"
+  | "share-code"
+  | "crop"
+  | "empty-placeholder"
+  | "move-down"
+  | "move-up"
+  | "move"
+  | "replace-cover"
+  | "reset-framing"
+  | "zoom-in"
+  | "zoom-out"
+  | "adult"
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "loading"
+  | "local-only"
+  | "public"
+  | "restricted"
+  | "success"
+  | "warning";
+
+function SvgIcon({
+  name,
+  className = "",
+  title,
+}: {
+  name: McdfIconName;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <svg
+      className={`mcdf-icon mcdf-icon--fantasy-glamour ${className}`}
+      viewBox="0 0 24 24"
+      aria-hidden={title ? undefined : true}
+      role={title ? "img" : undefined}
+    >
+      {title && <title>{title}</title>}
+      <use href={`/icons/sprite.svg#${name}`} />
+    </svg>
+  );
+}
+
 
 type OperationStage = {
   percent: number;
@@ -312,6 +414,7 @@ type PublicPackageRecord = {
   tags?: string[];
   preview_image_available?: boolean;
   preview_image_path?: string | null;
+  preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: string | null;
   owner: { display_name?: string; public_id?: string };
@@ -510,6 +613,7 @@ type ExchangeEditDraft = {
   isAdult: boolean;
   previewImagePath: string;
   previewImageName: string;
+  previewCrop: PreviewCrop;
 };
 
 type ExchangeOwnerMutationResponse = {
@@ -522,6 +626,7 @@ type ExchangeOwnerMutationResponse = {
   owner_public_id: string;
   owner_display_name: string;
   preview_image_path?: string | null;
+  preview_crop?: PreviewCrop | null;
   removed: boolean;
   index_rendered: boolean;
   index_pushed: boolean;
@@ -748,6 +853,195 @@ function readLibrarySettings(): LocalLibrarySettings {
 function writeLibrarySettings(settings: LocalLibrarySettings) {
   localStorage.setItem(LOCAL_LIBRARY_SETTINGS_KEY, JSON.stringify(settings));
 }
+
+
+type ClientDebugSettings = {
+  fakeExchangeEnabled: boolean;
+  fakeExchangeCount: number;
+  fakeLibraryEnabled: boolean;
+  fakeLibraryCount: number;
+};
+const CLIENT_DEBUG_SETTINGS_KEY = "mcdf.debug.clientSettings.v1";
+const CLIENT_DEBUG_SETTINGS_EVENT = "mcdf-debug-settings-changed";
+
+function clampDebugCount(value: unknown): number {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 200;
+  return Math.max(0, Math.min(1000, Math.round(numberValue)));
+}
+
+function readClientDebugSettings(): ClientDebugSettings {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CLIENT_DEBUG_SETTINGS_KEY) || "{}");
+    return {
+      fakeExchangeEnabled: Boolean(parsed.fakeExchangeEnabled),
+      fakeExchangeCount: clampDebugCount(parsed.fakeExchangeCount ?? 200),
+      fakeLibraryEnabled: Boolean(parsed.fakeLibraryEnabled),
+      fakeLibraryCount: clampDebugCount(parsed.fakeLibraryCount ?? 200),
+    };
+  } catch {
+    return {
+      fakeExchangeEnabled: false,
+      fakeExchangeCount: 200,
+      fakeLibraryEnabled: false,
+      fakeLibraryCount: 200,
+    };
+  }
+}
+
+function writeClientDebugSettings(settings: ClientDebugSettings) {
+  const normalized = {
+    fakeExchangeEnabled: Boolean(settings.fakeExchangeEnabled),
+    fakeExchangeCount: clampDebugCount(settings.fakeExchangeCount),
+    fakeLibraryEnabled: Boolean(settings.fakeLibraryEnabled),
+    fakeLibraryCount: clampDebugCount(settings.fakeLibraryCount),
+  };
+  localStorage.setItem(CLIENT_DEBUG_SETTINGS_KEY, JSON.stringify(normalized));
+  window.dispatchEvent(new Event(CLIENT_DEBUG_SETTINGS_EVENT));
+}
+
+function fakeHash(seed: number): string {
+  const chars = "0123456789abcdef";
+  let value = "";
+  for (let i = 0; i < 64; i += 1) value += chars[(seed * 17 + i * 11 + Math.floor(i / 3)) % chars.length];
+  return value;
+}
+
+function fakePreviewDataUri(index: number, title: string): string {
+  const hue = (index * 37) % 360;
+  const accent = `hsl(${hue}, 78%, 68%)`;
+  const accent2 = `hsl(${(hue + 72) % 360}, 82%, 58%)`;
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 840">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#160d2f"/>
+          <stop offset="0.5" stop-color="${accent}" stop-opacity="0.56"/>
+          <stop offset="1" stop-color="#0b0718"/>
+        </linearGradient>
+        <radialGradient id="r" cx="50%" cy="32%" r="55%">
+          <stop offset="0" stop-color="#fff1ff" stop-opacity="0.72"/>
+          <stop offset="0.45" stop-color="${accent2}" stop-opacity="0.42"/>
+          <stop offset="1" stop-color="#0b0718" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <rect width="600" height="840" fill="url(#g)"/>
+      <rect width="600" height="840" fill="url(#r)"/>
+      <circle cx="300" cy="252" r="104" fill="#fff7ff" opacity="0.16"/>
+      <path d="M210 520 C238 390 362 390 390 520 L420 760 H180 Z" fill="#12091f" opacity="0.58"/>
+      <path d="M180 670 C250 628 350 628 420 670" fill="none" stroke="#fff1ff" stroke-width="10" opacity="0.28"/>
+      <text x="300" y="94" text-anchor="middle" font-family="Georgia,serif" font-size="42" fill="#fff8ff">MCDF</text>
+      <text x="300" y="780" text-anchor="middle" font-family="Arial,sans-serif" font-size="26" fill="#fff8ff">${title.replace(/[<&]/g, "")}</text>
+    </svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function generateFakeExchangePackages(count: number): PublicIndexPackageSummary[] {
+  const tags = ["glamour", "dark", "elegant", "event", "aura", "miqo", "viera", "pose", "sparkle", "archive"];
+  const kinds = [["model", "texture", "material"], ["texture", "skeleton"], ["animation", "pose", "metadata"], ["model", "material", "skeleton"]];
+  return Array.from({ length: clampDebugCount(count) }, (_, index) => {
+    const n = index + 1;
+    const hash = fakeHash(1000 + n);
+    const title = `Debug Exchange Look ${String(n).padStart(3, "0")}`;
+    return {
+      package_hash_blake3: hash,
+      share_id: `debug-${n}`,
+      share_code: `debug.exchange:${hash.slice(0, 16)}`,
+      original_filename: `debug-exchange-look-${String(n).padStart(3, "0")}.mcdf`,
+      title,
+      description: `Fake Exchange listing ${n} for layout, filtering, table, detail-pane, and card stress testing.`,
+      tags: [tags[index % tags.length], tags[(index + 3) % tags.length], `set-${(index % 8) + 1}`],
+      preview_image_available: true,
+      preview_image_path: fakePreviewDataUri(index, title),
+      preview_crop: { x: ((index % 5) - 2) * 4, y: ((index % 7) - 3) * 3, scale: 1.05 + (index % 6) * 0.04 },
+      is_adult: index % 11 === 0,
+      visibility: "public",
+      owner_display_name: `Debug Creator ${(index % 14) + 1}`,
+      owner_public_id: `debug-creator-${(index % 14) + 1}`,
+      file_count: 8 + (index % 43),
+      total_file_bytes: 4_000_000 + index * 187_531,
+      component_kinds: kinds[index % kinds.length],
+      package_manifest_path: `debug://exchange/${hash}.json`,
+      download_manifest_path: `debug://exchange/${hash}/download.json`,
+      updated_at: new Date(Date.now() - index * 3600_000).toISOString(),
+    };
+  });
+}
+
+function fakePackageRecordFromSummary(pkg: PublicIndexPackageSummary): PublicPackageRecord {
+  return {
+    schema_version: 1,
+    generated_at: pkg.updated_at || new Date().toISOString(),
+    package_hash_blake3: pkg.package_hash_blake3,
+    share_id: pkg.share_id,
+    share_code: pkg.share_code,
+    original_filename: pkg.original_filename,
+    title: pkg.title,
+    description: pkg.description,
+    tags: pkg.tags || [],
+    preview_image_available: pkg.preview_image_available,
+    preview_image_path: pkg.preview_image_path || null,
+    preview_crop: pkg.preview_crop || null,
+    is_adult: pkg.is_adult,
+    visibility: pkg.visibility,
+    owner: { display_name: pkg.owner_display_name, public_id: pkg.owner_public_id },
+    parser_revision: 0,
+    parser_status: "debug fake data",
+    rebuild_strategy: "debug",
+    container_encoding: "debug",
+    validation: { decoded_content_identical: true, file_payloads_hash_verified: true, file_payload_count: pkg.file_count },
+    file_count: pkg.file_count,
+    total_file_bytes: pkg.total_file_bytes,
+    files: Array.from({ length: Math.min(pkg.file_count, 18) }, (_, index) => ({
+      index,
+      payload_blake3: fakeHash(index + 5000),
+      length: 32_000 + index * 8192,
+      game_paths: [`chara/debug/${pkg.package_hash_blake3.slice(0, 8)}/file-${index}.bin`],
+      component_kind: pkg.component_kinds[index % Math.max(1, pkg.component_kinds.length)] || "unknown",
+      display_name: `Debug component ${index + 1}`,
+      ghcr_ref: null,
+      ghcr_digest: null,
+    })),
+  };
+}
+
+function generateFakeLibraryEntries(count: number): LocalMcdfEntry[] {
+  const tags = ["local", "favorite", "draft", "event", "creator", "variant", "archive", "debug"];
+  return Array.from({ length: clampDebugCount(count) }, (_, index) => {
+    const n = index + 1;
+    const title = `Debug Library Entry ${String(n).padStart(3, "0")}`;
+    return {
+      id: `debug-library-${n}`,
+      local_path: "",
+      source_type: "indexed",
+      source_url: null,
+      source_label: "Debug fake local entry",
+      remote_annotation: "Fake local Library entry for UI stress testing. It is not saved to your real Library.",
+      missing_registry_percent: null,
+      original_filename: `debug-library-entry-${String(n).padStart(3, "0")}.mcdf`,
+      title,
+      description: `Fake Library entry ${n} with varied tags and component counts for layout testing.`,
+      tags: [tags[index % tags.length], tags[(index + 2) % tags.length], `batch-${(index % 10) + 1}`],
+      preview_image_path: fakePreviewDataUri(index + 300, title),
+      preview_crop: { x: ((index % 6) - 3) * 3, y: ((index % 8) - 4) * 2, scale: 1.08 + (index % 5) * 0.05 },
+      is_adult: index % 13 === 0,
+      visibility: "public",
+      package_hash_blake3: fakeHash(7000 + n),
+      file_count: 6 + (index % 36),
+      total_file_bytes: 2_500_000 + index * 91_337,
+      component_kinds: ["model", "texture", index % 3 === 0 ? "animation" : "material"],
+      file_manifest: [],
+      sharing_policy: null,
+      storage_state: "offline",
+      last_checked_at: new Date(Date.now() - index * 7200_000).toISOString(),
+      last_published_at: null,
+      manifest_url: null,
+      download_url: null,
+      notes: ["Debug fake data. Disable it from Admin → Debug settings."],
+    };
+  });
+}
+
 const STORAGE_SETUP_ACK_KEY = "mcdf.storageSetup.ack.v1";
 function storageSetupAcknowledged(): boolean {
   return localStorage.getItem(STORAGE_SETUP_ACK_KEY) === "yes";
@@ -933,7 +1227,7 @@ function PreviewFramingModal({
             onClick={onClose}
             aria-label="Close"
           >
-            ×
+            <SvgIcon name="close" />
           </button>
         </div>
         <div className="preview-framing-body">
@@ -956,7 +1250,7 @@ function PreviewFramingModal({
               style={previewImageStyle(workingCrop)}
             />
             <div className="preview-frame-wheel-indicator" aria-hidden="true">
-              ✥
+              <SvgIcon name="move" />
             </div>
             <div className="preview-frame-nudge-pad" aria-label="Move preview image">
               <button
@@ -965,7 +1259,7 @@ function PreviewFramingModal({
                 onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { y: -4 }))}
                 aria-label="Move picture up"
               >
-                ↑
+                <SvgIcon name="move-up" />
               </button>
               <button
                 type="button"
@@ -973,7 +1267,7 @@ function PreviewFramingModal({
                 onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { x: -4 }))}
                 aria-label="Move picture left"
               >
-                ←
+                <SvgIcon name="move" />
               </button>
               <button
                 type="button"
@@ -981,7 +1275,7 @@ function PreviewFramingModal({
                 onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { x: 4 }))}
                 aria-label="Move picture right"
               >
-                →
+                <SvgIcon name="move" />
               </button>
               <button
                 type="button"
@@ -989,7 +1283,7 @@ function PreviewFramingModal({
                 onClick={() => setWorkingCrop((current) => nudgePreviewCrop(current, { y: 4 }))}
                 aria-label="Move picture down"
               >
-                ↓
+                <SvgIcon name="move-down" />
               </button>
             </div>
           </div>
@@ -1100,7 +1394,7 @@ type PanelProps = {
 
 const navSections: Array<{
   title: string;
-  items: Array<{ id: Tab; label: string; icon: string; hint: string }>;
+  items: Array<{ id: Tab; label: string; icon: McdfIconName; hint: string }>;
 }> = [
   {
     title: "INDEX",
@@ -1108,20 +1402,20 @@ const navSections: Array<{
       {
         id: "library",
         label: "Library",
-        icon: "⌁",
+        icon: "library",
         hint: "Local and subscribed entries",
       },
       {
         id: "published",
         label: "The Eorzea Exchange",
-        icon: "✧",
+        icon: "exchange",
         hint: "Search the registry",
       },
     ],
   },
   {
     title: "Advanced",
-    items: [{ id: "prepare", label: "Analyze", icon: "◇", hint: "" }],
+    items: [{ id: "prepare", label: "Analyze", icon: "analyze", hint: "" }],
   },
   {
     title: "System",
@@ -1129,13 +1423,13 @@ const navSections: Array<{
       {
         id: "settings",
         label: "Settings",
-        icon: "⚙",
+        icon: "settings",
         hint: "Cache and build info",
       },
       {
         id: "admin",
         label: "Admin",
-        icon: "✦",
+        icon: "admin",
         hint: "Moderation and ownership",
       },
     ],
@@ -1328,6 +1622,7 @@ type PackageSubscriptionSnapshot = {
   description?: string;
   tags?: string[];
   preview_image_path?: string | null;
+  preview_crop?: PreviewCrop | null;
   is_adult?: boolean;
   visibility?: McdfVisibility;
   owner_public_id?: string | null;
@@ -1783,6 +2078,21 @@ function inferComponentKind(file: Pick<FileLike, "game_paths">): string {
   if (joined.includes("face") || joined.includes("head")) return "Face";
   return "Other";
 }
+
+function iconForComponentKind(kind: string): McdfIconName {
+  const normalized = kind.toLowerCase();
+  if (normalized.includes("texture")) return "texture";
+  if (normalized.includes("material")) return "material";
+  if (normalized.includes("model")) return "model";
+  if (normalized.includes("skeleton")) return "skeleton";
+  if (normalized.includes("animation")) return "animation";
+  if (normalized.includes("pose")) return "pose";
+  if (normalized.includes("hash")) return "hash-chunk";
+  if (normalized.includes("metadata")) return "metadata";
+  if (normalized.includes("mcdf") || normalized.includes("package")) return "mcdf-package";
+  return "unknown";
+}
+
 function probeComponentKind(file: ExtractedFileInfo): string {
   return (
     inferComponentKind(file)
@@ -2058,7 +2368,7 @@ function ErrorBox({ error }: { error: string | null }) {
                 onClick={() => setDetailsOpen(false)}
                 aria-label="Close error details"
               >
-                ×
+                <SvgIcon name="close" />
               </button>
             </div>
             <pre className="error-detail-text">{errorLog}</pre>
@@ -2239,7 +2549,7 @@ function LayerInventoryModal({
             <div className="eyebrow">MCDF layers</div>
             <h2>{entry.title || entry.original_filename}</h2>
           </div>
-          <IconButton label="Close layers" onClick={onClose}>×</IconButton>
+          <IconButton label="Close layers" onClick={onClose}><SvgIcon name="close" /></IconButton>
         </div>
         <div className="layer-modal-summary">
           <span className="status-pill status-neutral">{files.length} files</span>
@@ -2282,10 +2592,10 @@ function LayerInventoryModal({
                     className="library-action-button layer-download-button"
                     onClick={() => void exportFile(file)}
                   >
-                    {exportingKey === key ? "…" : "⇩"}
+                    {exportingKey === key ? <SvgIcon name="loading" /> : <SvgIcon name="export" />}
                   </IconButton>
                 </span>
-                <span className="layer-file-type" title={inferComponentKind(file)}>{inferComponentKind(file)}</span>
+                <span className="layer-file-type" title={inferComponentKind(file)}><SvgIcon name={iconForComponentKind(inferComponentKind(file))} />{inferComponentKind(file)}</span>
                 <span className="layer-file-name" title={displayName}>{displayName}</span>
                 <span className="layer-file-path" title={displayPath}>{displayPath}</span>
                 <span className="layer-file-size">{formatBytes(file.length)}</span>
@@ -2412,7 +2722,7 @@ function ComponentSummary({ files }: { files: FileLike[] }) {
         )}
         {groups.map((group) => (
           <div key={group.kind} className="component-card">
-            <div className="component-icon">{group.kind.slice(0, 1)}</div>
+            <div className="component-icon"><SvgIcon name={iconForComponentKind(group.kind)} /></div>
             <div>
               <div className="component-name">{group.kind}</div>
               <div className="component-meta">
@@ -3533,7 +3843,7 @@ function AddMcdfEntryModal({
             onClick={onClose}
             aria-label="Close"
           >
-            ×
+            <SvgIcon name="close" />
           </button>
         </div>
         {step === "choose" ? (
@@ -3619,28 +3929,14 @@ function AddMcdfEntryModal({
                     onError={() => setDraftPreviewImageFailed(true)}
                   />
                 ) : (
-                  <div className="preview-placeholder large">✧</div>
+                  <div className="preview-placeholder large"><SvgIcon name="empty-placeholder" /></div>
                 )}
                 <span className="preview-edit-chip">
                   {previewImporting ? "Saving picture…" : draft.previewPath ? "Frame picture" : "Add picture"}
                 </span>
               </button>
-              <div className="preview-cache-note" title={draft.previewPath || undefined}>
-                Preview image will be stored with this library entry.
-              </div>
-              {draft.previewPath && (
-                <GhostButton
-                  disabled={loading || previewImporting}
-                  onClick={chooseDraftPreview}
-                >
-                  Choose different picture
-                </GhostButton>
-              )}
             </div>
             <div className="add-entry-review-form">
-              <div className="modal-user-copy compact">
-                Review the library entry. These details stay local until published.
-              </div>
               <label>
                 <span>Display name</span>
                 <Field
@@ -3836,6 +4132,9 @@ function OnlineLibraryPanel({
     useState<Record<string, PackageSubscriptionSnapshot>>(() =>
       readPackageSubscriptionSnapshots(),
     );
+  const [debugSettings, setDebugSettings] = useState<ClientDebugSettings>(() =>
+    readClientDebugSettings(),
+  );
   useEffect(() => {
     const syncPublishingRules = () =>
       setPublishingRulesAccepted(hasAcceptedPublishingRules());
@@ -3936,7 +4235,14 @@ function OnlineLibraryPanel({
       ],
     };
   });
-  const combinedEntries = [...subscribedIndexEntries, ...entries];
+  const debugLibraryEntries = useMemo(
+    () =>
+      debugSettings.fakeLibraryEnabled
+        ? generateFakeLibraryEntries(debugSettings.fakeLibraryCount)
+        : [],
+    [debugSettings.fakeLibraryEnabled, debugSettings.fakeLibraryCount],
+  );
+  const combinedEntries = [...debugLibraryEntries, ...subscribedIndexEntries, ...entries];
   const selectedEntry =
     combinedEntries.find((entry) => entry.id === selectedId) ?? null;
   const entryHasLocalFile = (
@@ -4089,7 +4395,10 @@ function OnlineLibraryPanel({
       setPackageSubscriptions(readPackageSubscriptions());
       setPackageSubscriptionSnapshots(readPackageSubscriptionSnapshots());
     };
+    const refreshDebugSettings = () => setDebugSettings(readClientDebugSettings());
     window.addEventListener("mcdf-library-settings-changed", refreshSettings);
+    window.addEventListener(CLIENT_DEBUG_SETTINGS_EVENT, refreshDebugSettings);
+    window.addEventListener("storage", refreshDebugSettings);
     window.addEventListener(
       "mcdf-creator-subscriptions-changed",
       refreshSubscriptions,
@@ -4104,6 +4413,8 @@ function OnlineLibraryPanel({
         "mcdf-library-settings-changed",
         refreshSettings,
       );
+      window.removeEventListener(CLIENT_DEBUG_SETTINGS_EVENT, refreshDebugSettings);
+      window.removeEventListener("storage", refreshDebugSettings);
       window.removeEventListener(
         "mcdf-creator-subscriptions-changed",
         refreshSubscriptions,
@@ -4643,7 +4954,7 @@ function OnlineLibraryPanel({
         className="library-action-button"
         onClick={() => void shareEntry(entry)}
       >
-        ↗
+        <SvgIcon name="open-location" />
       </IconButton>
       <IconButton
         label={
@@ -4658,7 +4969,7 @@ function OnlineLibraryPanel({
         className="library-action-button"
         onClick={() => void exportLocalEntry(entry)}
       >
-        ⇩
+        <SvgIcon name="export" />
       </IconButton>
       <IconButton
         label={
@@ -4670,7 +4981,7 @@ function OnlineLibraryPanel({
         className="library-action-button"
         onClick={() => publishEntry(entry)}
       >
-        ✦
+        <SvgIcon name="publish" />
       </IconButton>
       <IconButton
         label={
@@ -4693,7 +5004,7 @@ function OnlineLibraryPanel({
           removeEntry(entry);
         }}
       >
-        ×
+        <SvgIcon name="remove-local" />
       </IconButton>
     </div>
   );
@@ -4986,6 +5297,7 @@ function OnlineLibraryPanel({
     const nextPreviewPath = usesOpenEditor
       ? publishPreviewPath || entry.preview_image_path || null
       : entry.preview_image_path || null;
+    const nextPreviewCrop = nextPreviewPath ? normalizePreviewCrop(entry.preview_crop) : null;
     const nextIsAdult = usesOpenEditor
       ? publishIsAdult
       : Boolean(entryIsAdult(entry));
@@ -5009,6 +5321,7 @@ function OnlineLibraryPanel({
           description: nextDescription || null,
           tags: nextTags,
           previewImagePath: nextPreviewPath,
+          previewCrop: nextPreviewCrop,
           isAdult: nextIsAdult,
           visibility: nextVisibility,
           ...localPublisherAuthHeaders(),
@@ -5022,6 +5335,7 @@ function OnlineLibraryPanel({
         description: nextDescription || entry.description,
         tags: nextTags,
         preview_image_path: nextPreviewPath,
+        preview_crop: nextPreviewCrop,
         is_adult: nextIsAdult,
         visibility: nextVisibility,
         package_hash_blake3: result.package_hash_blake3,
@@ -5163,21 +5477,6 @@ function OnlineLibraryPanel({
           </SuccessBox>
         )}
         <Panel className="library-results-section">
-          <div className="library-results-header">
-            <div>
-              <div className="eyebrow">My Library</div>
-              <h2>
-                {filteredEntries.length} shown · {combinedEntries.length} total
-              </h2>
-            </div>
-            <span className="flat-status">
-              {subscribedIndexEntries.length > 0
-                ? `${subscribedIndexEntries.length} subscribed online`
-                : publicIndex
-                  ? `${publicIndex.package_count} in index`
-                  : "index not checked"}
-            </span>
-          </div>
           <div className="library-toolbar">
             <Field
               value={librarySearch}
@@ -5470,7 +5769,7 @@ function OnlineLibraryPanel({
                   style={previewImageStyle(selectedEntry.preview_crop)}
                 />
               ) : (
-                <div className="preview-placeholder large">✧</div>
+                <div className="preview-placeholder large"><SvgIcon name="empty-placeholder" /></div>
               )}
               {selectedEntry.storage_state !== "subscribed" &&
                 selectedEntry.storage_state !== "removed" && (
@@ -5539,7 +5838,7 @@ function OnlineLibraryPanel({
                   className="detail-close-button"
                   onClick={() => setDetailsPaneOpen(false)}
                 >
-                  ×
+                  <SvgIcon name="close" />
                 </IconButton>
               </div>
             </div>
@@ -6162,7 +6461,7 @@ function PublishingRulesModal({
             <h2>Before you publish</h2>
           </div>
           <IconButton label="Close publishing rules" onClick={onClose}>
-            ×
+            <SvgIcon name="close" />
           </IconButton>
         </div>
         <div className="eula-scroll">
@@ -6573,7 +6872,7 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             aria-label="Close"
           >
-            ×
+            <SvgIcon name="close" />
           </button>
         </div>
         <p className="compact-note">
@@ -6595,7 +6894,7 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
                 alt={profile.displayName || "Profile"}
               />
             ) : (
-              <div className="preview-placeholder large">✧</div>
+              <div className="preview-placeholder large"><SvgIcon name="empty-placeholder" /></div>
             )}
             <span className="preview-edit-chip">
               {profile.image ? "Change picture" : "Add picture"}
@@ -7183,6 +7482,7 @@ function SettingsPanel({
           description: metadataDescription || null,
           tags: tagsFromText(publishTags),
           previewImagePath: publishPreviewPath,
+          previewCrop: null,
           isAdult: false,
           visibility: "public",
           ...localPublisherAuthHeaders(),
@@ -7632,17 +7932,38 @@ function SettingsPanel({
   );
 }
 
+function normalizePublicIndexAssetPath(relativePath?: string | null): string | null {
+  if (!relativePath) return null;
+  const trimmed = relativePath.trim();
+  if (!trimmed) return null;
+  if (/^(https?:|data:|blob:|asset:|tauri:)/i.test(trimmed)) return trimmed;
+  return trimmed.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^public\//i, "");
+}
+
+function publicIndexAssetUrlCandidates(
+  indexUrl: string,
+  relativePath?: string | null,
+): string[] {
+  const normalized = normalizePublicIndexAssetPath(relativePath);
+  if (!normalized) return [];
+  if (/^(https?:|data:|blob:|asset:|tauri:)/i.test(normalized)) return [normalized];
+
+  // Exchange browsing is static-index first. The live registry server is reserved for
+  // management actions such as publishing, owner edits, deletion, and moderation.
+  // Do not fetch card/detail images from the live registry API/host here.
+  const indexBase = indexUrl
+    .replace(/\\/g, "/")
+    .replace(/indexes\/latest\.json(?:\?.*)?$/i, "");
+  const indexAssetUrl = `${indexBase.replace(/\/+$/, "")}/${normalized}`;
+
+  return [indexAssetUrl];
+}
+
 function publicIndexAssetUrl(
   indexUrl: string,
   relativePath?: string | null,
 ): string | null {
-  if (!relativePath) return null;
-  const normalized = relativePath.replace(/^\/+/, "");
-  const base = indexUrl
-    .replace(/\\/g, "/")
-    .replace(/public\/indexes\/latest\.json$/, "public/")
-    .replace(/indexes\/latest\.json$/, "");
-  return `${base}${normalized}`;
+  return publicIndexAssetUrlCandidates(indexUrl, relativePath)[0] || null;
 }
 
 function publicIndexSiblingUrl(indexUrl: string, relativePath: string): string {
@@ -7668,34 +7989,100 @@ function tagsFromText(text: string): string[] {
     .slice(0, 32);
 }
 
+function PublicIndexPreviewImage({
+  indexUrl,
+  image,
+  crop,
+  alt,
+  className,
+}: {
+  indexUrl: string;
+  image?: string | null;
+  crop?: PreviewCrop | null;
+  alt: string;
+  className?: string;
+}) {
+  const candidates = useMemo(
+    () => publicIndexAssetUrlCandidates(indexUrl, image),
+    [indexUrl, image],
+  );
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  useEffect(() => setCandidateIndex(0), [indexUrl, image]);
+
+  const src = candidates[candidateIndex] ? displayImageSrc(candidates[candidateIndex]) : null;
+  if (!src) return <div className="preview-placeholder"><SvgIcon name="empty-placeholder" /></div>;
+
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={alt}
+      style={previewImageStyle(crop)}
+      onError={() => setCandidateIndex((current) => current + 1)}
+    />
+  );
+}
+
 function PreviewTile({
   image,
   crop,
   title,
   adult,
+  indexUrl,
 }: {
   image?: string | null;
   crop?: PreviewCrop | null;
   title: string;
   adult?: boolean;
+  indexUrl?: string;
+}) {
+  const candidates = indexUrl
+    ? publicIndexAssetUrlCandidates(indexUrl, image)
+    : image
+      ? [image]
+      : [];
+  return (
+    <div className={`preview-tile ${candidates.length ? "has-image" : "no-image"}`}>
+      {candidates.length ? (
+        indexUrl ? (
+          <PublicIndexPreviewImage
+            indexUrl={indexUrl}
+            image={image}
+            crop={crop}
+            alt={title}
+          />
+        ) : (
+          <LocalPreviewTileImage image={image} crop={crop} title={title} />
+        )
+      ) : (
+        <div className="preview-placeholder"><SvgIcon name="empty-placeholder" /></div>
+      )}
+      {adult && <span className="adult-corner">18+</span>}
+    </div>
+  );
+}
+
+function LocalPreviewTileImage({
+  image,
+  crop,
+  title,
+}: {
+  image?: string | null;
+  crop?: PreviewCrop | null;
+  title: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [image]);
   const safeImage = image && !imageFailed ? displayImageSrc(image) : null;
+  if (!safeImage) return <div className="preview-placeholder"><SvgIcon name="empty-placeholder" /></div>;
   return (
-    <div className={`preview-tile ${safeImage ? "has-image" : "no-image"}`}>
-      {safeImage ? (
-        <img
-          src={safeImage}
-          alt={title}
-          style={previewImageStyle(crop)}
-          onError={() => setImageFailed(true)}
-        />
-      ) : (
-        <div className="preview-placeholder">✧</div>
-      )}
-      {adult && <span className="adult-corner">18+</span>}
-    </div>
+    <img
+      src={safeImage}
+      alt={title}
+      style={previewImageStyle(crop)}
+      onError={() => setImageFailed(true)}
+    />
   );
 }
 
@@ -7755,6 +8142,15 @@ function SystemAdminPanel({
   const [indexSshTest, setIndexSshTest] = useState<IndexSshTestResult | null>(
     null,
   );
+  const [debugSettings, setDebugSettings] = useState<ClientDebugSettings>(() =>
+    readClientDebugSettings(),
+  );
+
+  const updateDebugSettings = (patch: Partial<ClientDebugSettings>) => {
+    const next = { ...debugSettings, ...patch };
+    setDebugSettings(next);
+    writeClientDebugSettings(next);
+  };
 
   const loadIndexDiagnostics = async () => {
     setLoading(true);
@@ -8210,6 +8606,80 @@ function SystemAdminPanel({
 
   return (
     <div className="settings-screen integrated-settings admin-screen">
+      <Panel>
+        <div className="panel-title-row">
+          <div>
+            <div className="eyebrow">Client debug</div>
+            <h2>Debug settings</h2>
+          </div>
+          <span className={debugSettings.fakeExchangeEnabled || debugSettings.fakeLibraryEnabled ? "status-pill status-good" : "status-pill status-neutral"}>
+            {debugSettings.fakeExchangeEnabled || debugSettings.fakeLibraryEnabled ? "fake data on" : "off"}
+          </span>
+        </div>
+        <p>
+          Add temporary fake entries on this machine to stress-test Exchange and Library layouts.
+          These entries are never written to the registry or your real Library.
+        </p>
+        <div className="debug-settings-grid">
+          <label className="debug-toggle-row">
+            <input
+              type="checkbox"
+              checked={debugSettings.fakeExchangeEnabled}
+              onChange={(event) => updateDebugSettings({ fakeExchangeEnabled: event.target.checked })}
+            />
+            <span>Show fake Exchange entries</span>
+          </label>
+          <Field
+            type="number"
+            min="0"
+            max="1000"
+            value={String(debugSettings.fakeExchangeCount)}
+            onChange={(event) => updateDebugSettings({ fakeExchangeCount: clampDebugCount(event.target.value) })}
+            placeholder="Exchange fake entries"
+          />
+          <label className="debug-toggle-row">
+            <input
+              type="checkbox"
+              checked={debugSettings.fakeLibraryEnabled}
+              onChange={(event) => updateDebugSettings({ fakeLibraryEnabled: event.target.checked })}
+            />
+            <span>Show fake Library entries</span>
+          </label>
+          <Field
+            type="number"
+            min="0"
+            max="1000"
+            value={String(debugSettings.fakeLibraryCount)}
+            onChange={(event) => updateDebugSettings({ fakeLibraryCount: clampDebugCount(event.target.value) })}
+            placeholder="Library fake entries"
+          />
+        </div>
+        <div className="hero-actions">
+          <GhostButton
+            onClick={() =>
+              updateDebugSettings({
+                fakeExchangeEnabled: true,
+                fakeExchangeCount: 200,
+                fakeLibraryEnabled: true,
+                fakeLibraryCount: 200,
+              })
+            }
+          >
+            Enable 200 + 200
+          </GhostButton>
+          <GhostButton
+            onClick={() =>
+              updateDebugSettings({
+                fakeExchangeEnabled: false,
+                fakeLibraryEnabled: false,
+              })
+            }
+          >
+            Disable fake data
+          </GhostButton>
+        </div>
+      </Panel>
+
       {!adminToken.trim() && (
         <Panel>
           <div className="panel-title-row">
@@ -8265,7 +8735,7 @@ function SystemAdminPanel({
                 }
                 title={loading ? "Loading admin state" : "Refresh admin state"}
               >
-                ↻
+                <SvgIcon name="refresh" />
               </button>
             </div>
             <ErrorBox error={error} />
@@ -8699,7 +9169,7 @@ function SystemAdminPanel({
                 aria-label={loading ? "Loading blocklist" : "Refresh blocklist"}
                 title={loading ? "Loading blocklist" : "Refresh blocklist"}
               >
-                ↻
+                <SvgIcon name="refresh" />
               </button>
             </div>
             <div className="source-list moderation-list">
@@ -8980,6 +9450,9 @@ function PublishedIndexPanel({
   const [packageSubscriptions, setPackageSubscriptions] = useState<string[]>(
     () => readPackageSubscriptions(),
   );
+  const [debugSettings, setDebugSettings] = useState<ClientDebugSettings>(() =>
+    readClientDebugSettings(),
+  );
   const [downloadResult, setDownloadResult] =
     useState<ArchiveDownloadResult | null>(null);
   const [requestAccessResult, setRequestAccessResult] =
@@ -8989,6 +9462,7 @@ function PublishedIndexPanel({
     useState<ExchangeOwnerMutationResponse | null>(null);
   const [exchangeEditDraft, setExchangeEditDraft] =
     useState<ExchangeEditDraft | null>(null);
+  const [exchangeFramingOpen, setExchangeFramingOpen] = useState(false);
   const [cacheInspection, setCacheInspection] =
     useState<ExchangePackageCacheInspection | null>(null);
   const [cacheActionResult, setCacheActionResult] =
@@ -9055,6 +9529,16 @@ function PublishedIndexPanel({
     loadIndex().catch(console.error);
   }, []);
 
+  useEffect(() => {
+    const refreshDebugSettings = () => setDebugSettings(readClientDebugSettings());
+    window.addEventListener(CLIENT_DEBUG_SETTINGS_EVENT, refreshDebugSettings);
+    window.addEventListener("storage", refreshDebugSettings);
+    return () => {
+      window.removeEventListener(CLIENT_DEBUG_SETTINGS_EVENT, refreshDebugSettings);
+      window.removeEventListener("storage", refreshDebugSettings);
+    };
+  }, []);
+
   const inspectPackage = async (pkg: PublicIndexPackageSummary) => {
     rememberRecent(pkg.package_hash_blake3);
     setDetailsPaneOpen(true);
@@ -9067,11 +9551,21 @@ function PublishedIndexPanel({
     setCacheInspection(null);
     setCacheActionResult(null);
     try {
+      if (pkg.package_manifest_path.startsWith("debug://")) {
+        setSelectedPublicPackage(fakePackageRecordFromSummary(pkg));
+        setDetailsPaneOpen(true);
+        return;
+      }
       const packageRecord = await invoke<PublicPackageRecord>("fetch_public_package_record", {
         indexUrl,
         packageManifestPath: pkg.package_manifest_path,
       });
-      setSelectedPublicPackage(packageRecord);
+      setSelectedPublicPackage({
+        ...packageRecord,
+        preview_image_path:
+          packageRecord.preview_image_path ?? pkg.preview_image_path ?? null,
+        preview_crop: packageRecord.preview_crop ?? pkg.preview_crop ?? null,
+      });
       setDetailsPaneOpen(true);
     } catch (e) {
       setIndexError(String(e));
@@ -9333,6 +9827,7 @@ function PublishedIndexPanel({
                     owner_public_id: result.owner_public_id,
                     preview_image_path:
                       result.preview_image_path ?? pkg.preview_image_path,
+                    preview_crop: result.preview_crop ?? pkg.preview_crop ?? null,
                     updated_at: updatedAt,
                   }
                 : pkg,
@@ -9351,6 +9846,7 @@ function PublishedIndexPanel({
             visibility: result.visibility,
             preview_image_path:
               result.preview_image_path ?? current.preview_image_path,
+            preview_crop: result.preview_crop ?? current.preview_crop ?? null,
             owner: {
               ...current.owner,
               public_id: result.owner_public_id,
@@ -9377,6 +9873,7 @@ function PublishedIndexPanel({
       isAdult: packageIsAdult(selectedPublicPackage),
       previewImagePath: "",
       previewImageName: "",
+      previewCrop: normalizePreviewCrop(selectedPublicPackage.preview_crop),
     });
   };
 
@@ -9391,9 +9888,10 @@ function PublishedIndexPanel({
     const name = selected.split(/[\\/]/).pop() || "New preview image";
     setExchangeEditDraft((current) =>
       current
-        ? { ...current, previewImagePath: selected, previewImageName: name }
+        ? { ...current, previewImagePath: selected, previewImageName: name, previewCrop: DEFAULT_PREVIEW_CROP }
         : current,
     );
+    setExchangeFramingOpen(true);
   };
 
   const saveExchangeEditModal = async (event: FormEvent<HTMLFormElement>) => {
@@ -9408,11 +9906,7 @@ function PublishedIndexPanel({
       setIndexError("Give the Exchange listing a title before saving.");
       return;
     }
-    const visibility = exchangeEditDraft.visibility.trim() || "public";
-    if (!["public", "locked", "private"].includes(visibility)) {
-      setIndexError("Visibility must be public, locked, or private.");
-      return;
-    }
+    const visibility = selectedPublicPackage.visibility || exchangeEditDraft.visibility.trim() || "public";
     const publisherAuth = localPublisherAuthHeaders();
     setPackageLoading(true);
     setIndexError(null);
@@ -9427,9 +9921,10 @@ function PublishedIndexPanel({
           title,
           description: exchangeEditDraft.description,
           tags: tagsFromText(exchangeEditDraft.tags),
-          isAdult: exchangeEditDraft.isAdult,
+          isAdult: packageIsAdult(selectedPublicPackage),
           visibility,
           previewImagePath: exchangeEditDraft.previewImagePath || null,
+          previewCrop: normalizePreviewCrop(exchangeEditDraft.previewCrop),
           publisherId: publisherAuth.publisherId,
           publisherDisplayName: publisherAuth.publisherDisplayName,
           publisherPublicKey: publisherAuth.publisherPublicKey,
@@ -9438,6 +9933,7 @@ function PublishedIndexPanel({
       );
       setOwnerActionResult(result);
       applyOwnerMutationResult(result);
+      setExchangeFramingOpen(false);
       setExchangeEditDraft(null);
       setDetailsPaneOpen(true);
       await loadIndex();
@@ -9497,7 +9993,27 @@ function PublishedIndexPanel({
     writeLibrarySettings(next);
   };
 
-  const packages = publicIndex?.packages ?? [];
+  const fakeExchangePackages = useMemo(
+    () =>
+      debugSettings.fakeExchangeEnabled
+        ? generateFakeExchangePackages(debugSettings.fakeExchangeCount)
+        : [],
+    [debugSettings.fakeExchangeEnabled, debugSettings.fakeExchangeCount],
+  );
+  const basePackages = publicIndex?.packages ?? [];
+  const packages = debugSettings.fakeExchangeEnabled
+    ? [...fakeExchangePackages, ...basePackages]
+    : basePackages;
+  const exchangeIndexForDisplay: PublicIndexLatest | null = publicIndex
+    ? { ...publicIndex, package_count: packages.length, packages }
+    : debugSettings.fakeExchangeEnabled
+      ? {
+          schema_version: 1,
+          generated_at: new Date().toISOString(),
+          package_count: packages.length,
+          packages,
+        }
+      : null;
   const availableTags = Array.from(
     new Set(packages.flatMap((pkg) => pkg.tags || [])),
   ).sort();
@@ -9528,8 +10044,7 @@ function PublishedIndexPanel({
       (exchangeFilter === "recent" &&
         recentHashes.includes(pkg.package_hash_blake3)) ||
       (exchangeFilter === "subscribed" &&
-        (creatorSubscriptions.includes(creatorId) ||
-          packageSubscriptions.includes(pkg.package_hash_blake3)));
+        packageSubscriptions.includes(pkg.package_hash_blake3));
     return (
       matchesSearch &&
       matchesCreator &&
@@ -9549,8 +10064,7 @@ function PublishedIndexPanel({
   ).slice(0, 16);
   const unseenSubscribedCount = packages.filter(
     (pkg) =>
-      (creatorSubscriptions.includes(creatorKeyFromPackage(pkg)) ||
-        packageSubscriptions.includes(pkg.package_hash_blake3)) &&
+      packageSubscriptions.includes(pkg.package_hash_blake3) &&
       !recentHashes.includes(pkg.package_hash_blake3),
   ).length;
   const dateMode = librarySettings.dateDisplayMode;
@@ -9570,29 +10084,11 @@ function PublishedIndexPanel({
   };
   return (
     <div
-      className={`screen-grid published-screen exchange-screen exchange-flat no-left-preview ${selectedPublicPackage ? "has-selection" : "no-selection"}`}
+      className={`screen-grid published-screen exchange-screen exchange-flat no-left-preview ${selectedPublicPackage && detailsPaneOpen ? "has-selection" : "no-selection"}`}
       onMouseDown={closeExchangeDetailsWhenClickingOutside}
     >
       <div className="main-stack exchange-main-flat">
-        <div className="exchange-flat-toolbar">
-          <div className="exchange-toolbar-title">
-            <div className="eyebrow">Search the registry</div>
-            <h1>The Eorzea Exchange</h1>
-          </div>
-          <div className="exchange-toolbar-actions">
-            <button
-              type="button"
-              className="refresh-icon-button"
-              disabled={indexLoading}
-              onClick={loadIndex}
-              aria-label={
-                indexLoading ? "Loading registry" : "Refresh registry"
-              }
-              title={indexLoading ? "Loading registry" : "Refresh registry"}
-            >
-              ↻
-            </button>
-          </div>
+        <div className="exchange-flat-toolbar compact-browser-toolbar">
           <div className="library-toolbar exchange-toolbar-row exchange-inline-filters">
             <Field
               value={exchangeSearch}
@@ -9619,7 +10115,7 @@ function PublishedIndexPanel({
               <option value="all">All</option>
               <option value="favorites">★ Favorites</option>
               <option value="recent">Recently viewed</option>
-              <option value="subscribed">Followed / tracked</option>
+              <option value="subscribed">Tracked entries</option>
             </select>
             <select
               value={creatorFilter}
@@ -9643,6 +10139,16 @@ function PublishedIndexPanel({
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className="refresh-icon-button compact-toolbar-refresh"
+              disabled={indexLoading}
+              onClick={loadIndex}
+              aria-label={indexLoading ? "Loading registry" : "Refresh registry"}
+              title={indexLoading ? "Loading registry" : "Refresh registry"}
+            >
+              <SvgIcon name="refresh" />
+            </button>
           </div>
         </div>
         <ErrorBox error={indexError} />
@@ -9652,7 +10158,7 @@ function PublishedIndexPanel({
               <div className="eyebrow">Creator</div>
               <h2>{selectedCreator[1]}</h2>
               <p>
-                {creatorPackages.length} public entries. Following is stored locally so this creator's Exchange entries are easy to review in My Library.
+                {creatorPackages.length} public entries by this creator.
               </p>
               {creatorTagShelf.length > 0 && (
                 <div className="tag-row compact-tags">
@@ -9665,19 +10171,6 @@ function PublishedIndexPanel({
             <div className="inline-actions">
               <GhostButton
                 className="flat-action"
-                title={
-                  creatorSubscriptions.includes(selectedCreator[0])
-                    ? "Remove this local creator subscription"
-                    : "Follow this creator locally"
-                }
-                onClick={() => toggleCreatorSubscription(selectedCreator[0])}
-              >
-                {creatorSubscriptions.includes(selectedCreator[0])
-                  ? "Following"
-                  : "Follow"}
-              </GhostButton>
-              <GhostButton
-                className="flat-action"
                 onClick={() => setCreatorFilter("")}
               >
                 All creators
@@ -9688,26 +10181,14 @@ function PublishedIndexPanel({
         {exchangeFilter === "subscribed" && unseenSubscribedCount > 0 && (
           <div className="exchange-inline-section subscription-line">
             <strong>
-              {unseenSubscribedCount} followed or tracked Exchange entries not recently
+              {unseenSubscribedCount} tracked Exchange entries not recently
               viewed
             </strong>
             <span>Open Details on an entry to mark it as recently viewed.</span>
           </div>
         )}
-        {publicIndex && (
+        {exchangeIndexForDisplay && (
           <div className="exchange-results-section">
-            <div className="exchange-results-header">
-              <div>
-                <div className="eyebrow">Entries</div>
-                <h2>
-                  {visiblePackages.length} shown · {publicIndex.package_count}{" "}
-                  indexed
-                </h2>
-              </div>
-              <span className="flat-status status-good">
-                Date {formatDate(publicIndex.generated_at, dateMode)}
-              </span>
-            </div>
             {packages.length === 0 ? (
               <p className="empty-small">
                 The index is loaded, but it does not list packages yet.
@@ -9739,7 +10220,6 @@ function PublishedIndexPanel({
                   const isFavorite = favoriteHashes.includes(
                     pkg.package_hash_blake3,
                   );
-                  const isSubscribed = creatorSubscriptions.includes(creatorId);
                   return (
                     <div
                       key={pkg.package_hash_blake3}
@@ -9772,14 +10252,14 @@ function PublishedIndexPanel({
                       <span>{formatBytes(pkg.total_file_bytes)}</span>
                       <span>
                         {formatDate(
-                          pkg.updated_at || publicIndex.generated_at,
+                          pkg.updated_at || exchangeIndexForDisplay.generated_at,
                           dateMode,
                         )}
                       </span>
                       <span
                         className={`table-tick ${isFavorite ? "yes" : "no"}`}
                       >
-                        {isFavorite ? "★" : "—"}
+                        {isFavorite ? <SvgIcon name="favorite-filled" /> : <SvgIcon name="favorite-empty" />}
                       </span>
                       <span className="exchange-table-actions">
                         <button
@@ -9793,24 +10273,7 @@ function PublishedIndexPanel({
                             toggleFavorite(pkg.package_hash_blake3)
                           }
                         >
-                          {isFavorite ? "★" : "☆"}
-                        </button>
-                        <button
-                          type="button"
-                          className={`exchange-icon-action ${isSubscribed ? "active" : ""}`}
-                          title={
-                            isSubscribed
-                              ? "Unfollow creator"
-                              : "Follow creator locally"
-                          }
-                          aria-label={
-                            isSubscribed
-                              ? "Unfollow creator"
-                              : "Follow creator"
-                          }
-                          onClick={() => toggleCreatorSubscription(creatorId)}
-                        >
-                          {isSubscribed ? "✓" : "+"}
+                          {isFavorite ? <SvgIcon name="favorite-filled" /> : <SvgIcon name="favorite-empty" />}
                         </button>
                         <GhostButton
                           className="flat-action"
@@ -9831,7 +10294,6 @@ function PublishedIndexPanel({
                   const isFavorite = favoriteHashes.includes(
                     pkg.package_hash_blake3,
                   );
-                  const isSubscribed = creatorSubscriptions.includes(creatorId);
                   return (
                     <div
                       key={pkg.package_hash_blake3}
@@ -9844,10 +10306,9 @@ function PublishedIndexPanel({
                         disabled={packageLoading}
                       >
                         <PreviewTile
-                          image={publicIndexAssetUrl(
-                            indexUrl,
-                            pkg.preview_image_path,
-                          )}
+                          indexUrl={indexUrl}
+                          image={pkg.preview_image_path}
+                          crop={pkg.preview_crop}
                           title={
                             pkg.title ||
                             pkg.original_filename ||
@@ -9879,18 +10340,13 @@ function PublishedIndexPanel({
                         <span className="status-pill status-neutral">
                           Updated{" "}
                           {formatDate(
-                            pkg.updated_at || publicIndex.generated_at,
+                            pkg.updated_at || exchangeIndexForDisplay.generated_at,
                             dateMode,
                           )}
                         </span>
                         {isFavorite && (
                           <span className="status-pill status-good">
                             favorite
-                          </span>
-                        )}
-                        {isSubscribed && (
-                          <span className="status-pill status-good">
-                            creator followed
                           </span>
                         )}
                       </div>
@@ -9906,24 +10362,7 @@ function PublishedIndexPanel({
                             toggleFavorite(pkg.package_hash_blake3)
                           }
                         >
-                          {isFavorite ? "★" : "☆"}
-                        </button>
-                        <button
-                          type="button"
-                          className={`exchange-icon-action ${isSubscribed ? "active" : ""}`}
-                          title={
-                            isSubscribed
-                              ? "Unfollow creator"
-                              : "Follow creator locally"
-                          }
-                          aria-label={
-                            isSubscribed
-                              ? "Unfollow creator"
-                              : "Follow creator"
-                          }
-                          onClick={() => toggleCreatorSubscription(creatorId)}
-                        >
-                          {isSubscribed ? "✓" : "+"}
+                          {isFavorite ? <SvgIcon name="favorite-filled" /> : <SvgIcon name="favorite-empty" />}
                         </button>
                         <GhostButton
                           className="flat-action"
@@ -9950,74 +10389,103 @@ function PublishedIndexPanel({
       {selectedPublicPackage && exchangeEditDraft && (
         <div
           className="modal-backdrop exchange-edit-backdrop"
-          onMouseDown={() => !packageLoading && setExchangeEditDraft(null)}
+          onMouseDown={() => { if (!packageLoading) { setExchangeFramingOpen(false); setExchangeEditDraft(null); } }}
         >
           <form
             className="modal-card exchange-edit-modal exchange-listing-studio"
             onSubmit={saveExchangeEditModal}
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="exchange-edit-hero">
+            <div className="exchange-edit-hero exchange-edit-hero-compact">
               <div>
                 <div className="eyebrow">Creator listing studio</div>
-                <h2>Make this Exchange entry shine</h2>
-                <p>
-                  Tune the cover, title, tags, and visibility people see while
-                  browsing The Eorzea Exchange. Package content changes still
-                  need a delete and republish so downloads stay trustworthy.
-                </p>
+                <h2>Edit Exchange listing</h2>
               </div>
               <IconButton
                 label="Close edit listing"
                 className="detail-close-button exchange-edit-close"
                 disabled={packageLoading}
-                onClick={() => setExchangeEditDraft(null)}
+                onClick={() => { setExchangeFramingOpen(false); setExchangeEditDraft(null); }}
               >
-                ×
+                <SvgIcon name="close" />
               </IconButton>
             </div>
             {indexError && <ErrorBox error={indexError} />}
             <div className="exchange-edit-layout">
               <section className="exchange-cover-card">
                 <span className="eyebrow">Cover image</span>
-                <div className="exchange-cover-preview">
-                  {exchangeEditDraft.previewImagePath ||
-                  selectedPublicPackage.preview_image_path ? (
+                <button
+                  type="button"
+                  className="entry-detail-preview entry-detail-preview-button add-preview-picker exchange-cover-picker"
+                  disabled={packageLoading}
+                  onClick={() =>
+                    exchangeEditDraft.previewImagePath || selectedPublicPackage.preview_image_path
+                      ? setExchangeFramingOpen(true)
+                      : chooseExchangeEditPreviewImage()
+                  }
+                  title={
+                    exchangeEditDraft.previewImagePath || selectedPublicPackage.preview_image_path
+                      ? "Frame Exchange cover image"
+                      : "Choose Exchange cover image"
+                  }
+                >
+                  {exchangeEditDraft.previewImagePath ? (
                     <img
-                      src={
-                        exchangeEditDraft.previewImagePath
-                          ? displayImageSrc(exchangeEditDraft.previewImagePath) || undefined
-                          : publicIndexAssetUrl(
-                              indexUrl,
-                              selectedPublicPackage.preview_image_path || "",
-                            ) || undefined
-                      }
+                      src={displayImageSrc(exchangeEditDraft.previewImagePath) || undefined}
+                      alt="Exchange listing cover preview"
+                      style={previewImageStyle(exchangeEditDraft.previewCrop)}
+                    />
+                  ) : selectedPublicPackage.preview_image_path ? (
+                    <PublicIndexPreviewImage
+                      indexUrl={indexUrl}
+                      image={selectedPublicPackage.preview_image_path}
+                      crop={exchangeEditDraft.previewCrop}
                       alt="Exchange listing cover preview"
                     />
                   ) : (
-                    <div className="exchange-cover-placeholder">
-                      <strong>No cover yet</strong>
-                      <span>Add a preview so the entry feels like a character, not a file.</span>
-                    </div>
+                    <div className="exchange-cover-placeholder preview-placeholder large"><SvgIcon name="empty-placeholder" /></div>
                   )}
-                </div>
-                <div className="exchange-cover-copy">
-                  <strong>First impression matters.</strong>
-                  <span>Use a PNG, JPG, WEBP, or GIF below 5 MiB.</span>
+                  <span className="preview-edit-chip">
+                    {exchangeEditDraft.previewImagePath || selectedPublicPackage.preview_image_path
+                      ? "Frame picture"
+                      : "Add picture"}
+                  </span>
+                </button>
+                <div className="exchange-cover-actions">
+                  <GhostButton
+                    type="button"
+                    disabled={packageLoading}
+                    onClick={chooseExchangeEditPreviewImage}
+                  >
+                    Replace cover image
+                  </GhostButton>
                   {exchangeEditDraft.previewImageName && (
-                    <code>{exchangeEditDraft.previewImageName}</code>
+                    <span className="exchange-cover-filename" title={exchangeEditDraft.previewImageName}>
+                      {exchangeEditDraft.previewImageName}
+                    </span>
                   )}
                 </div>
-                <GhostButton
-                  type="button"
-                  disabled={packageLoading}
-                  onClick={chooseExchangeEditPreviewImage}
-                >
-                  Replace cover image
-                </GhostButton>
+                {exchangeFramingOpen && (exchangeEditDraft.previewImagePath || selectedPublicPackage.preview_image_path) && (
+                  <PreviewFramingModal
+                    image={
+                      exchangeEditDraft.previewImagePath ||
+                      publicIndexAssetUrl(indexUrl, selectedPublicPackage.preview_image_path || "") ||
+                      ""
+                    }
+                    title={exchangeEditDraft.title || selectedPublicPackage.original_filename}
+                    crop={normalizePreviewCrop(exchangeEditDraft.previewCrop)}
+                    onClose={() => setExchangeFramingOpen(false)}
+                    onApply={(previewCrop) => {
+                      setExchangeEditDraft((current) =>
+                        current ? { ...current, previewCrop } : current,
+                      );
+                      setExchangeFramingOpen(false);
+                    }}
+                  />
+                )}
               </section>
-              <section className="exchange-edit-fields">
-                <label className="field-label feature-field">
+              <section className="exchange-edit-fields exchange-edit-fields-unified">
+                <label className="field-label exchange-studio-field">
                   <span>Listing title</span>
                   <Field
                     value={exchangeEditDraft.title}
@@ -10030,10 +10498,10 @@ function PublishedIndexPanel({
                     autoFocus
                   />
                 </label>
-                <label className="field-label feature-field">
-                  <span>Story / description</span>
+                <label className="field-label exchange-studio-field">
+                  <span>Description</span>
                   <textarea
-                    className="field textarea-field"
+                    className="field textarea-field exchange-description-field"
                     value={exchangeEditDraft.description}
                     onChange={(event) =>
                       setExchangeEditDraft((current) =>
@@ -10042,11 +10510,11 @@ function PublishedIndexPanel({
                           : current,
                       )
                     }
-                    rows={6}
-                    placeholder="Tell people what makes this look special, what style it fits, and anything they should know before downloading."
+                    rows={5}
+                    placeholder="Describe the look, style, dependencies, or anything downloaders should know."
                   />
                 </label>
-                <label className="field-label feature-field">
+                <label className="field-label exchange-studio-field">
                   <span>Tags</span>
                   <Field
                     value={exchangeEditDraft.tags}
@@ -10058,43 +10526,13 @@ function PublishedIndexPanel({
                     placeholder="fantasy, event, pose, texture"
                   />
                 </label>
-                <div className="exchange-edit-grid">
-                  <label className="field-label feature-field">
-                    <span>Visibility</span>
-                    <select
-                      className="field"
-                      value={exchangeEditDraft.visibility}
-                      onChange={(event) =>
-                        setExchangeEditDraft((current) =>
-                          current
-                            ? { ...current, visibility: event.target.value }
-                            : current,
-                        )
-                      }
-                    >
-                      <option value="public">Public — visible and downloadable</option>
-                      <option value="locked">Locked — visible, access required</option>
-                      <option value="private">Private — hidden from normal browsing</option>
-                    </select>
-                  </label>
-                  <label className="toggle-line exchange-adult-toggle">
-                    <input
-                      type="checkbox"
-                      checked={exchangeEditDraft.isAdult}
-                      onChange={(event) =>
-                        setExchangeEditDraft((current) =>
-                          current
-                            ? { ...current, isAdult: event.target.checked }
-                            : current,
-                        )
-                      }
-                    />
-                    <span>18+ / adult content</span>
-                  </label>
-                </div>
-                <div className="exchange-edit-warning">
-                  <strong>Need to fix the actual package?</strong>
-                  <span>Delete this Exchange listing and publish again from the corrected local entry.</span>
+                <div className="exchange-readonly-row" aria-label="Listing status">
+                  <span className="status-pill status-neutral">
+                    {(selectedPublicPackage.visibility || "public").toUpperCase()}
+                  </span>
+                  <span className="status-pill status-neutral">
+                    {packageIsAdult(selectedPublicPackage) ? "18+" : "General"}
+                  </span>
                 </div>
               </section>
             </div>
@@ -10102,7 +10540,7 @@ function PublishedIndexPanel({
               <GhostButton
                 type="button"
                 disabled={packageLoading}
-                onClick={() => setExchangeEditDraft(null)}
+                onClick={() => { setExchangeFramingOpen(false); setExchangeEditDraft(null); }}
               >
                 Cancel
               </GhostButton>
@@ -10140,86 +10578,57 @@ function PublishedIndexPanel({
                   className="detail-close-button"
                   onClick={() => setDetailsPaneOpen(false)}
                 >
-                  ×
+                  <SvgIcon name="close" />
                 </IconButton>
               </div>
             </div>
             <div className="published-detail">
               {selectedPublicPackage.preview_image_path && (
-                <img
-                  className="package-preview-inline detail-hero-preview"
-                  src={
-                    publicIndexAssetUrl(
-                      indexUrl,
-                      selectedPublicPackage.preview_image_path,
-                    ) || undefined
-                  }
-                  alt={
-                    selectedPublicPackage.title ||
-                    selectedPublicPackage.original_filename
-                  }
-                />
+                <div className="exchange-detail-preview-frame">
+                  <PublicIndexPreviewImage
+                    className="package-preview-inline detail-hero-preview"
+                    indexUrl={indexUrl}
+                    image={selectedPublicPackage.preview_image_path}
+                    crop={selectedPublicPackage.preview_crop}
+                    alt={
+                      selectedPublicPackage.title ||
+                      selectedPublicPackage.original_filename
+                    }
+                  />
+                </div>
               )}
-              <div className="summary-metrics">
-                <div>
+              <div className="exchange-detail-info-table" aria-label="Exchange entry details">
+                <div className="exchange-detail-info-row exchange-detail-info-row-wide">
+                  <span>Creator</span>
+                  <strong>{selectedPublicPackage.owner?.display_name || "Unknown creator"}</strong>
+                </div>
+                <div className="exchange-detail-info-row">
+                  <span>Files</span>
                   <strong>{selectedPublicPackage.file_count}</strong>
-                  <span>files</span>
                 </div>
-                <div>
-                  <strong>
-                    {formatBytes(selectedPublicPackage.total_file_bytes)}
-                  </strong>
-                  <span>payload</span>
+                <div className="exchange-detail-info-row">
+                  <span>Payload</span>
+                  <strong>{formatBytes(selectedPublicPackage.total_file_bytes)}</strong>
                 </div>
-                <div>
-                  <strong>
-                    {selectedPublicPackage.validation
-                      ?.file_payloads_hash_verified
-                      ? "verified"
-                      : "pending"}
-                  </strong>
-                  <span>hashes</span>
+                <div className="exchange-detail-info-row exchange-detail-info-row-wide">
+                  <span>Description</span>
+                  <p>{selectedPublicPackage.description || "No description was published for this package."}</p>
                 </div>
-              </div>
-              <div className="creator-profile-mini">
-                <div>
-                  <span className="eyebrow">Creator</span>
-                  <strong>
-                    {selectedPublicPackage.owner?.display_name ||
-                      "Unknown creator"}
-                  </strong>
-                </div>
-                <span className="status-pill status-neutral">
-                  {
-                    packages.filter(
-                      (pkg) =>
-                        creatorKeyFromPackage(pkg) ===
-                        String(
-                          selectedPublicPackage.owner?.public_id ||
-                            selectedPublicPackage.owner?.display_name ||
-                            "unknown",
-                        ),
-                    ).length
-                  }{" "}
-                  entries
-                </span>
-              </div>
-              <p>
-                {selectedPublicPackage.description ||
-                  "No description was published for this package."}
-              </p>
-              {exchangePackageTags(selectedPublicPackage).length > 0 && (
-                <div className="tag-group">
-                  <span className="tag-group-title">Creator tags</span>
-                  <div className="tag-row">
-                    {exchangePackageTags(selectedPublicPackage).map((tag) => (
-                      <span key={tag}>#{tag}</span>
-                    ))}
+                {exchangePackageTags(selectedPublicPackage).length > 0 && (
+                  <div className="exchange-detail-info-row exchange-detail-info-row-wide">
+                    <span>Tags</span>
+                    <div className="tag-row exchange-detail-tags">
+                      {exchangePackageTags(selectedPublicPackage).map((tag) => (
+                        <span key={tag}>#{tag}</span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
-              <div className="exchange-entry-controls">
-                <PrimaryButton
+                )}
+              </div>
+              <div className="exchange-detail-action-bar" aria-label="Exchange entry actions">
+                <button
+                  type="button"
+                  className="exchange-detail-icon-action primary"
                   disabled={
                     packageLoading ||
                     selectedPublicPackage.visibility === "locked" ||
@@ -10229,127 +10638,115 @@ function PublishedIndexPanel({
                     selectedPublicPackage.visibility === "locked" ||
                     selectedPublicPackage.visibility === "private"
                       ? "Access is required before downloading this entry."
-                      : undefined
+                      : "Download MCDF"
+                  }
+                  aria-label={
+                    selectedPublicPackage.visibility === "locked" ||
+                    selectedPublicPackage.visibility === "private"
+                      ? "Access required"
+                      : "Download MCDF"
                   }
                   onClick={downloadSelectedExchangePackage}
                 >
-                  {packageLoading
-                    ? "Working…"
-                    : selectedPublicPackage.visibility === "locked" ||
-                        selectedPublicPackage.visibility === "private"
-                      ? "Access required"
-                      : "Download MCDF"}
-                </PrimaryButton>
+                  <SvgIcon name="download" />
+                </button>
                 {selectedPublicPackage.visibility === "locked" && (
-                  <GhostButton
+                  <button
+                    type="button"
+                    className="exchange-detail-icon-action"
                     disabled={!sharedArchiveConnected || packageLoading}
-                    title={
-                      serviceLockedMessage(sharedArchiveConnected) || undefined
-                    }
+                    title={serviceLockedMessage(sharedArchiveConnected) || "Request access"}
+                    aria-label="Request access"
                     onClick={requestAccessForSelectedPackage}
                   >
-                    Request access
-                  </GhostButton>
+                    <SvgIcon name="access-requests" />
+                  </button>
                 )}
-                {!creatorSubscriptions.includes(
-                  creatorKeyFromPackage(selectedPublicPackage),
-                ) && (
-                  <GhostButton
-                    onClick={() =>
-                      togglePackageSubscription(selectedPublicPackage)
-                    }
-                  >
-                    {packageSubscriptions.includes(
-                      selectedPublicPackage.package_hash_blake3,
-                    )
-                      ? "In My Library"
-                      : "Add to My Library"}
-                  </GhostButton>
-                )}
-                <GhostButton
-                  title="Follow this creator locally. When this is enabled, individual Add to My Library is hidden because the creator subscription already brings their online MCDFs into My Library."
-                  onClick={() =>
-                    toggleCreatorSubscription(
-                      creatorKeyFromPackage(selectedPublicPackage),
-                    )
-                  }
+                <button
+                  type="button"
+                  className={`exchange-detail-icon-action ${packageSubscriptions.includes(selectedPublicPackage.package_hash_blake3) ? "active" : ""}`}
+                  title={packageSubscriptions.includes(selectedPublicPackage.package_hash_blake3) ? "In My Library" : "Add to My Library"}
+                  aria-label={packageSubscriptions.includes(selectedPublicPackage.package_hash_blake3) ? "In My Library" : "Add to My Library"}
+                  onClick={() => togglePackageSubscription(selectedPublicPackage)}
                 >
-                  {creatorSubscriptions.includes(
-                    creatorKeyFromPackage(selectedPublicPackage),
-                  )
-                    ? "Creator followed"
-                    : "Follow creator"}
-                </GhostButton>
-                <GhostButton
-                  onClick={() =>
-                    toggleFavorite(selectedPublicPackage.package_hash_blake3)
-                  }
+                  <SvgIcon name="add-to-library" />
+                </button>
+                <button
+                  type="button"
+                  className={`exchange-detail-icon-action ${favoriteHashes.includes(selectedPublicPackage.package_hash_blake3) ? "active" : ""}`}
+                  title={favoriteHashes.includes(selectedPublicPackage.package_hash_blake3) ? "Favorite" : "Add favorite"}
+                  aria-label={favoriteHashes.includes(selectedPublicPackage.package_hash_blake3) ? "Favorite" : "Add favorite"}
+                  onClick={() => toggleFavorite(selectedPublicPackage.package_hash_blake3)}
                 >
-                  {favoriteHashes.includes(
-                    selectedPublicPackage.package_hash_blake3,
-                  )
-                    ? "★ Favorite"
-                    : "☆ Favorite"}
-                </GhostButton>
+                  <SvgIcon name="favorite-empty" />
+                </button>
                 {selectedPackageCanBeManaged && (
                   <>
-                    <GhostButton
+                    <button
+                      type="button"
+                      className="exchange-detail-icon-action"
                       disabled={!sharedArchiveConnected || packageLoading}
-                      title={
-                        selectedPackageIsOwnedByCurrentPublisher
-                          ? "Edit your published Exchange title, description, tags, 18+ flag, and visibility."
-                          : "Admin edit for this Exchange entry."
-                      }
+                      title={selectedPackageIsOwnedByCurrentPublisher ? "Edit listing" : "Admin edit listing"}
+                      aria-label={selectedPackageIsOwnedByCurrentPublisher ? "Edit listing" : "Admin edit listing"}
                       onClick={openExchangeEditModal}
                     >
-                      Edit listing
-                    </GhostButton>
-                    <GhostButton
+                      <SvgIcon name="edit-listing" />
+                    </button>
+                    <button
+                      type="button"
+                      className="exchange-detail-icon-action danger"
                       disabled={!sharedArchiveConnected || packageLoading}
-                      title={
-                        selectedPackageIsOwnedByCurrentPublisher
-                          ? "Delete your published listing from The Eorzea Exchange."
-                          : "Admin delete for this Exchange entry."
-                      }
+                      title={selectedPackageIsOwnedByCurrentPublisher ? "Delete listing" : "Admin delete listing"}
+                      aria-label={selectedPackageIsOwnedByCurrentPublisher ? "Delete listing" : "Admin delete listing"}
                       onClick={deleteSelectedPackageAsOwner}
                     >
-                      Delete listing
-                    </GhostButton>
+                      <SvgIcon name="delete-listing" />
+                    </button>
                   </>
                 )}
-                <GhostButton
+                <button
+                  type="button"
+                  className="exchange-detail-icon-action"
                   disabled={!sharedArchiveConnected || packageLoading}
-                  title={
-                    serviceLockedMessage(sharedArchiveConnected) || undefined
-                  }
+                  title={serviceLockedMessage(sharedArchiveConnected) || "Report listing"}
+                  aria-label="Report listing"
                   onClick={reportSelectedPackage}
                 >
-                  Report
-                </GhostButton>
+                  !
+                </button>
                 {storedAdminToken().trim() && (
-                  <GhostButton
+                  <button
+                    type="button"
+                    className="exchange-detail-icon-action danger"
                     disabled={!sharedArchiveConnected || packageLoading}
-                    title={
-                      serviceLockedMessage(sharedArchiveConnected) || undefined
-                    }
+                    title={serviceLockedMessage(sharedArchiveConnected) || "Admin remove"}
+                    aria-label="Admin remove"
                     onClick={removeSelectedPackageAsAdmin}
                   >
-                    Admin remove
-                  </GhostButton>
+                    <SvgIcon name="admin-remove" />
+                  </button>
                 )}
-                <GhostButton
+                <button
+                  type="button"
+                  className="exchange-detail-icon-action"
                   disabled={packageLoading}
+                  title="Inspect local cache"
+                  aria-label="Inspect local cache"
                   onClick={inspectSelectedPackageCache}
                 >
-                  Cache
-                </GhostButton>
+                  <SvgIcon name="inspect" />
+                </button>
                 {cacheInspection && cacheInspection.cached_count > 0 && (
-                  <GhostButton
+                  <button
+                    type="button"
+                    className="exchange-detail-icon-action danger"
                     disabled={packageLoading}
+                    title="Clear cached parts"
+                    aria-label="Clear cached parts"
                     onClick={clearSelectedPackageCache}
                   >
-                    Clear cached parts
-                  </GhostButton>
+                    <SvgIcon name="delete-listing" />
+                  </button>
                 )}
               </div>
               {requestAccessResult && (
@@ -10485,7 +10882,7 @@ function AccessNotificationModal({
                     : "Refresh access requests"
               }
             >
-              ↻
+              <SvgIcon name="refresh" />
             </button>
             <button
               type="button"
@@ -10494,7 +10891,7 @@ function AccessNotificationModal({
               aria-label="Close notifications"
               title="Close"
             >
-              ×
+              <SvgIcon name="close" />
             </button>
           </div>
         </div>
@@ -10619,7 +11016,7 @@ function WindowControls() {
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => runWindowCommand(event, "window_minimize")}
       >
-        <span className="window-glyph window-glyph-minimize" />
+        <SvgIcon name="minimize" />
       </button>
       <button
         type="button"
@@ -10629,7 +11026,7 @@ function WindowControls() {
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => runWindowCommand(event, "window_toggle_maximize")}
       >
-        <span className="window-glyph window-glyph-maximize" />
+        <SvgIcon name="maximize" />
       </button>
       <button
         type="button"
@@ -10639,7 +11036,7 @@ function WindowControls() {
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => runWindowCommand(event, "window_close")}
       >
-        <span className="window-glyph window-glyph-close" />
+        <SvgIcon name="close" />
       </button>
     </div>
   );
@@ -11006,7 +11403,7 @@ function App() {
                     activeTab === item.id ? "nav-item active" : "nav-item"
                   }
                 >
-                  <span className="nav-icon">{item.icon}</span>
+                  <span className="nav-icon"><SvgIcon name={item.icon} /></span>
                   <span>
                     <strong>{item.label}</strong>
                     <small>{item.hint}</small>
@@ -11072,13 +11469,6 @@ function App() {
         >
           <div className="topbar-title" data-tauri-drag-region>
             <h1 data-tauri-drag-region>{activeLabel}</h1>
-          </div>
-          <div
-            className="topbar-stars"
-            data-tauri-drag-region
-            aria-hidden="true"
-          >
-            ✦ ✧ ✦
           </div>
           <div
             className="topbar-actions"

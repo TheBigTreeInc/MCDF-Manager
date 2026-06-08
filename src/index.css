@@ -4047,3 +4047,606 @@ body { min-width: 0; }
     min-height: 240px;
   }
 }
+
+/* fix166: Exchange covers use the same framing treatment as Library previews. */
+.exchange-cover-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.exchange-cover-preview img,
+.detail-hero-preview {
+  transform-origin: center center;
+  transition: transform .16s ease, object-position .16s ease;
+}
+.exchange-cover-preview img {
+  will-change: transform, object-position;
+}
+@media (max-width: 720px) {
+  .exchange-cover-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* fix167: Exchange owner cover uses the exact Library/Add MCDF picture framing surface. */
+.exchange-cover-picker {
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  max-height: min(460px, calc(100vh - 260px));
+  margin-bottom: 0;
+}
+.exchange-cover-picker .exchange-cover-placeholder {
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.exchange-cover-picker img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: cover;
+  transform-origin: center center;
+  transition: transform .16s ease, object-position .16s ease;
+}
+.exchange-detail-preview-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  max-height: min(520px, calc(100vh - 230px));
+  margin-bottom: 12px;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(216, 141, 255, .22);
+  background:
+    radial-gradient(circle at 50% 70%, rgba(255,119,220,.22), transparent 44%),
+    radial-gradient(circle at 50% 40%, rgba(151,92,255,.28), transparent 52%),
+    rgba(255,255,255,.04);
+}
+.exchange-detail-preview-frame .detail-hero-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+  object-fit: cover;
+  transform-origin: center center;
+}
+.exchange-cover-copy span {
+  line-height: 1.35;
+}
+
+/* fix168: quiet Exchange edit studio, unified form surface, and frame parity cleanup. */
+.exchange-listing-studio {
+  width: min(1040px, calc(100vw - 44px));
+  max-height: calc(100vh - 44px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.exchange-edit-hero-compact {
+  padding: 16px 24px 12px;
+  align-items: center;
+}
+.exchange-edit-hero-compact h2 {
+  margin: 3px 0 0;
+  font-size: clamp(20px, 2vw, 27px);
+  letter-spacing: -.02em;
+}
+.exchange-edit-hero-compact p {
+  display: none;
+}
+.exchange-edit-layout {
+  overflow: hidden;
+  max-height: none;
+  min-height: 0;
+  align-items: start;
+  padding: 16px 24px 14px;
+  grid-template-columns: minmax(250px, 330px) minmax(0, 1fr);
+}
+.exchange-cover-card {
+  gap: 12px;
+  padding: 14px;
+}
+.exchange-cover-card > .eyebrow,
+.exchange-cover-copy {
+  display: none;
+}
+.exchange-cover-picker {
+  max-height: min(420px, calc(100vh - 250px));
+}
+.exchange-cover-actions {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+.exchange-cover-filename {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(239,226,255,.68);
+  font-size: .76rem;
+  text-align: center;
+}
+.exchange-edit-fields-unified {
+  gap: 12px;
+  padding: 18px;
+  border-radius: 28px;
+}
+.exchange-studio-field {
+  display: grid;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.exchange-studio-field .field,
+.exchange-studio-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.exchange-description-field {
+  min-height: 132px;
+  max-height: min(220px, calc(100vh - 500px));
+  resize: vertical;
+}
+.exchange-readonly-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 2px;
+}
+.exchange-edit-warning,
+.exchange-edit-grid,
+.exchange-adult-toggle {
+  display: none !important;
+}
+.exchange-edit-actions {
+  padding: 12px 24px 18px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.add-entry-review-grid,
+.notification-modal .source-list,
+.add-entry-choice-panel {
+  scrollbar-gutter: stable;
+}
+.add-preview-column .preview-cache-note {
+  display: none;
+}
+@media (min-height: 760px) {
+  .exchange-description-field {
+    min-height: 164px;
+  }
+}
+@media (max-width: 880px) {
+  .exchange-edit-layout {
+    overflow: auto;
+    grid-template-columns: 1fr;
+  }
+  .exchange-cover-picker {
+    max-height: min(360px, calc(100vh - 260px));
+  }
+}
+
+/* fix171: Exchange detail pane uses saved cover framing, a compact facts table, and an icon action rail. */
+.exchange-detail-pane .glass-panel {
+  padding: 14px;
+}
+.exchange-detail-pane .published-detail {
+  display: grid;
+  gap: 12px;
+}
+.exchange-detail-pane .exchange-detail-preview-frame {
+  margin: 0;
+  aspect-ratio: 3 / 4;
+  max-height: min(56vh, 560px);
+}
+.exchange-detail-pane .exchange-detail-preview-frame .detail-hero-preview,
+.exchange-detail-pane .exchange-detail-preview-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  object-fit: cover;
+  box-shadow: none;
+  transform-origin: center center;
+}
+.exchange-detail-info-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(216, 141, 255, .18);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .035);
+}
+.exchange-detail-info-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid rgba(216, 141, 255, .12);
+  border-bottom: 1px solid rgba(216, 141, 255, .12);
+}
+.exchange-detail-info-row:nth-child(2n) {
+  border-right: 0;
+}
+.exchange-detail-info-row-wide {
+  grid-column: 1 / -1;
+  border-right: 0;
+}
+.exchange-detail-info-row:last-child {
+  border-bottom: 0;
+}
+.exchange-detail-info-row span {
+  color: rgba(239, 226, 255, .56);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.exchange-detail-info-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff6ff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exchange-detail-info-row p {
+  margin: 0;
+  color: rgba(239, 226, 255, .78);
+  line-height: 1.45;
+}
+.exchange-detail-tags {
+  margin-top: 0;
+}
+.exchange-detail-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(216, 141, 255, .18);
+  border-radius: 999px;
+  background: rgba(4, 1, 17, .58);
+}
+.exchange-detail-icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(216, 141, 255, .22);
+  border-radius: 999px;
+  color: rgba(255, 246, 255, .82);
+  background: rgba(255, 255, 255, .045);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease;
+}
+.exchange-detail-icon-action:hover:not(:disabled),
+.exchange-detail-icon-action.active {
+  color: #fff;
+  border-color: rgba(255, 119, 220, .42);
+  background: rgba(255, 119, 220, .15);
+  transform: translateY(-1px);
+}
+.exchange-detail-icon-action.primary {
+  color: #fff;
+  border-color: rgba(255, 119, 220, .52);
+  background: linear-gradient(135deg, rgba(163, 92, 255, .55), rgba(255, 119, 220, .48));
+  box-shadow: 0 10px 24px rgba(163, 92, 255, .22);
+}
+.exchange-detail-icon-action.danger:hover:not(:disabled) {
+  border-color: rgba(255, 143, 143, .42);
+  background: rgba(255, 86, 118, .14);
+}
+.exchange-detail-icon-action:disabled {
+  cursor: not-allowed;
+  opacity: .38;
+  transform: none;
+}
+.exchange-detail-pane .summary-metrics,
+.exchange-detail-pane .creator-profile-mini,
+.exchange-detail-pane .exchange-entry-controls {
+  display: none !important;
+}
+@media (max-width: 760px) {
+  .exchange-detail-info-table {
+    grid-template-columns: 1fr;
+  }
+  .exchange-detail-info-row {
+    border-right: 0;
+  }
+  .exchange-detail-action-bar {
+    border-radius: 22px;
+  }
+}
+
+/* fix172: custom MCDF fantasy/glamour icon sprite */
+.mcdf-icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  overflow: visible;
+  vertical-align: -0.125em;
+}
+.mcdf-icon .icon-accent,
+.mcdf-icon .icon-glamour,
+.mcdf-icon .icon-aura {
+  color: var(--glamour-accent, var(--accent, #ff77dc));
+}
+.icon-top-button .mcdf-icon,
+.exchange-detail-icon-action .mcdf-icon,
+.bell-button .mcdf-icon,
+.window-control .mcdf-icon,
+.preview-frame-nudge .mcdf-icon {
+  width: 18px;
+  height: 18px;
+}
+.nav-icon .mcdf-icon {
+  width: 20px;
+  height: 20px;
+}
+.preview-placeholder .mcdf-icon {
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 0 26px rgba(255,119,220,.55));
+}
+.preview-placeholder.large .mcdf-icon {
+  width: 86px;
+  height: 86px;
+}
+.topbar-stars {
+  display: inline-flex;
+  gap: 18px;
+  align-items: center;
+}
+.topbar-stars .mcdf-icon {
+  width: 15px;
+  height: 15px;
+}
+.activity-summary .mcdf-icon {
+  width: 16px;
+  height: 16px;
+}
+.layer-export-cell .icon-top-button .mcdf-icon,
+.library-action-button.icon-top-button .mcdf-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* fix174: local debug-data controls and quieter top-bar ornament area */
+.topbar-title { flex: 1; }
+.debug-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, 180px);
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+}
+.debug-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(216, 141, 255, 0.18);
+  background: rgba(255, 255, 255, 0.045);
+  border-radius: 16px;
+  padding: 11px 13px;
+  color: #f7eaff;
+}
+.debug-toggle-row input { accent-color: #d88dff; }
+@media (max-width: 860px) {
+  .debug-settings-grid { grid-template-columns: 1fr; }
+}
+
+/* fix175: compact Library/Exchange browse chrome and overlay Exchange details. */
+.exchange-screen.has-selection,
+.exchange-screen.no-selection {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+.exchange-screen .main-stack,
+.exchange-screen.no-selection .main-stack,
+.exchange-screen.has-selection .main-stack {
+  grid-column: 1 / -1;
+}
+.exchange-flat .elevated-detail-pane.exchange-detail-pane {
+  position: fixed !important;
+  top: 92px;
+  right: clamp(16px, 2.3vw, 42px);
+  bottom: 24px;
+  width: min(430px, calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 116px);
+  overflow: auto;
+  z-index: 76000;
+  pointer-events: auto;
+}
+.exchange-flat .elevated-detail-pane.exchange-detail-pane .glass-panel {
+  max-height: 100%;
+  overflow: auto;
+}
+.exchange-flat .elevated-detail-pane.exchange-detail-pane::before {
+  inset: -14px;
+}
+.exchange-flat-toolbar.compact-browser-toolbar {
+  display: block;
+  padding: 4px 0 12px;
+  border-bottom: 0;
+}
+.exchange-toolbar-title,
+.exchange-results-header,
+.library-results-header {
+  display: none !important;
+}
+.exchange-results-section {
+  padding-top: 8px;
+}
+.library-flat .library-results-section {
+  padding-top: 0;
+}
+.library-flat .library-toolbar,
+.exchange-inline-filters {
+  display: grid;
+  align-items: stretch;
+  gap: 0;
+  margin: 0 0 14px;
+  padding: 8px;
+  border: 1px solid rgba(216, 141, 255, .16);
+  border-radius: 14px;
+  background: rgba(6, 2, 21, .42);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+}
+.exchange-inline-filters {
+  grid-template-columns: minmax(240px, 1.5fr) repeat(4, minmax(130px, .8fr)) 42px;
+}
+.library-flat .library-toolbar {
+  grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(120px, .7fr)) repeat(3, auto);
+}
+.library-toolbar .field,
+.library-toolbar select,
+.library-toolbar .btn-ghost,
+.exchange-inline-filters .field,
+.exchange-inline-filters select,
+.exchange-inline-filters .btn-ghost,
+.compact-toolbar-refresh {
+  min-height: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border-color: rgba(216, 141, 255, .14);
+  background: rgba(8, 3, 28, .62);
+  box-shadow: none;
+}
+.library-toolbar .field,
+.exchange-inline-filters .field {
+  padding: 9px 12px;
+}
+.library-toolbar select,
+.exchange-inline-filters select {
+  padding: 8px 12px;
+}
+.library-toolbar .field:focus,
+.exchange-inline-filters .field:focus,
+.library-toolbar select:focus,
+.exchange-inline-filters select:focus {
+  border-color: rgba(255, 119, 220, .42);
+  box-shadow: 0 0 0 2px rgba(255, 119, 220, .10);
+}
+.compact-toolbar-refresh {
+  width: 40px;
+  padding: 0;
+  justify-self: end;
+}
+.library-card .flat-action,
+.exchange-entry-card .flat-action {
+  border-radius: 8px;
+}
+@media (max-width: 1100px) {
+  .exchange-inline-filters,
+  .library-flat .library-toolbar {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .compact-toolbar-refresh {
+    justify-self: stretch;
+    width: auto;
+  }
+}
+@media (max-width: 720px) {
+  .exchange-flat .elevated-detail-pane.exchange-detail-pane {
+    top: 74px;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    max-width: none;
+  }
+  .exchange-inline-filters,
+  .library-flat .library-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* fix176: detail drawer has exactly one vertical scroller and never exposes horizontal overflow. */
+.exchange-flat .elevated-detail-pane.exchange-detail-pane {
+  display: flex !important;
+  flex-direction: column;
+  overflow: hidden !important;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.exchange-flat .elevated-detail-pane.exchange-detail-pane .glass-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  width: 100%;
+  min-width: 0;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
+}
+.exchange-detail-pane,
+.exchange-detail-pane *,
+.exchange-detail-pane *::before,
+.exchange-detail-pane *::after {
+  box-sizing: border-box;
+}
+.exchange-detail-pane .published-detail,
+.exchange-detail-pane .panel-title-row,
+.exchange-detail-pane .detail-title-actions,
+.exchange-detail-pane .exchange-detail-info-table,
+.exchange-detail-pane .exchange-detail-info-row,
+.exchange-detail-pane .exchange-detail-action-bar {
+  min-width: 0;
+  max-width: 100%;
+}
+.exchange-detail-pane .panel-title-row {
+  gap: 10px;
+}
+.exchange-detail-pane .panel-title-row > div:first-child {
+  min-width: 0;
+}
+.exchange-detail-pane .panel-title-row h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exchange-detail-info-row strong,
+.exchange-detail-info-row p,
+.exchange-detail-tags,
+.exchange-detail-tags .tag-pill {
+  min-width: 0;
+  max-width: 100%;
+}
+.exchange-detail-info-row strong,
+.exchange-detail-info-row p {
+  overflow-wrap: anywhere;
+}
+.exchange-detail-action-bar {
+  overflow: hidden;
+}
+.exchange-detail-preview-frame {
+  width: 100%;
+  min-width: 0;
+}

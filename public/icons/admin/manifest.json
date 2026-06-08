@@ -1,0 +1,11 @@
+[
+  "access-requests",
+  "block-hash",
+  "blocklist",
+  "moderation-queue",
+  "public-index",
+  "publisher-certificate",
+  "registry-server",
+  "unblock",
+  "user-creator"
+]

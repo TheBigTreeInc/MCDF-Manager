@@ -1,0 +1,13 @@
+<svg class="mcdf-icon mcdf-icon--fantasy-glamour" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-label="Open location">
+  <path d="M3.5 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8a1.5 1.5 0 0 1 1.5 1.5V17a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17V7.5z" />
+  <path d="M9 12.5h6" />
+  <polyline points="13 10.5 15 12.5 13 14.5" />
+
+  <path class="icon-aura" d="M5.5 20.5c3-1.7 10-1.7 13 0" opacity="0.16" />
+
+  <g class="icon-glamour" opacity="0.58" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.5 2.8v3.1" stroke-width="1.35" />
+    <path d="M16.95 4.35h3.1" stroke-width="1.35" />
+    <circle cx="20.8" cy="6.9" r="0.55" fill="currentColor" stroke="none" opacity="0.55" />
+  </g>
+</svg>
