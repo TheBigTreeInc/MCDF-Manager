@@ -2,6 +2,31 @@
 
 MCDF Manager is a desktop library and registry browser for MCDF character packages. It keeps character files organized locally, connects to The Eorzea Exchange for public listings, and gives registered publishers a controlled flow for sharing entries with the community.
 
+## Download
+
+The easiest way to install MCDF Manager is from the GitHub **Releases** page. Choose the bundle for your operating system:
+
+| Platform | Release asset |
+|---|---|
+| Windows | `MCDF-Manager-Windows-x86_64-v<version>.zip` |
+| macOS Apple Silicon | `MCDF-Manager-macOS-Apple-Silicon-v<version>.zip` |
+| macOS Intel | `MCDF-Manager-macOS-Intel-v<version>.zip` |
+| Linux | `MCDF-Manager-Linux-x86_64-v<version>.zip` |
+
+Each release also includes `checksums.txt` and `release-manifest.json` so downloads can be verified. Main-branch prereleases are useful for testing the newest UI, while `client-v<version>` releases are the stable public builds.
+
+## Screenshots for the GitHub page
+
+Use **Admin → Debug settings** to fill Library and Exchange with fake entries before taking release screenshots. This keeps screenshots full and attractive without publishing real packages. Recommended screenshots:
+
+- Library grid with several framed character previews.
+- Exchange grid with fake entries and filters visible.
+- Exchange detail drawer opened on one entry.
+- Add MCDF review step with preview framing.
+- Admin debug settings showing fake data controls.
+
+Keep screenshots focused on characters, preview images, and simple download/share actions. Avoid raw hashes, internal layer tables, and moderation internals on the public landing page unless the screenshot is specifically for technical documentation.
+
 ### Fixed registry endpoint
 
 MCDF Manager connects to the public registry at `http://mcdf.thebigtree.life:48443`. The endpoint is fixed in this public client build and is not user-configurable. Legacy local settings and imported auth packages cannot switch the client back to `localhost` or `127.0.0.1`.

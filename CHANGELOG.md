@@ -1,4 +1,11 @@
 
+## fix177 - Layer modal and release-page polish
+
+- Reworked the MCDF layers modal header so the title is not clipped and the close action remains visible.
+- Constrained the layer inventory to the content area with the table scrolling inside the modal instead of stretching the whole window.
+- Added a clearer Download section to the README for GitHub Releases.
+- Added a release screenshot checklist for using Admin debug fake data to make public screenshots without real packages.
+
 ## fix176 - Exchange detail drawer scroll containment
 
 - Fixed the Exchange detail drawer so it has one internal vertical scrollbar instead of nested scrollbars.

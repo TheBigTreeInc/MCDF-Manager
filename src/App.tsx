@@ -2544,12 +2544,12 @@ function LayerInventoryModal({
         aria-label="MCDF layers and files"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="panel-title-row refined-modal-head">
-          <div>
-            <div className="eyebrow">MCDF layers</div>
+        <div className="layer-modal-head">
+          <div className="layer-modal-title-block">
             <h2>{entry.title || entry.original_filename}</h2>
+            <span>MCDF layers</span>
           </div>
-          <IconButton label="Close layers" onClick={onClose}><SvgIcon name="close" /></IconButton>
+          <IconButton label="Close layers" className="layer-modal-close" onClick={onClose}><SvgIcon name="close" /></IconButton>
         </div>
         <div className="layer-modal-summary">
           <span className="status-pill status-neutral">{files.length} files</span>

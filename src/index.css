@@ -4650,3 +4650,127 @@ body { min-width: 0; }
   width: 100%;
   min-width: 0;
 }
+
+
+/* fix177: MCDF layer inventory uses one clean modal frame with a visible close action. */
+.layer-modal-backdrop {
+  align-items: stretch !important;
+  justify-content: flex-end !important;
+  padding: 18px 18px 18px 286px;
+  overflow: hidden !important;
+  box-sizing: border-box;
+}
+.layer-inventory-modal {
+  width: min(1120px, calc(100vw - 322px)) !important;
+  max-width: calc(100vw - 322px) !important;
+  height: calc(100vh - 36px) !important;
+  max-height: calc(100vh - 36px) !important;
+  min-width: min(760px, calc(100vw - 322px));
+  display: grid !important;
+  grid-template-rows: auto auto auto minmax(0, 1fr) !important;
+  gap: 12px !important;
+  padding: 18px !important;
+  overflow: hidden !important;
+  box-sizing: border-box;
+}
+.layer-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(216, 141, 255, .18);
+}
+.layer-modal-title-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.layer-modal-title-block h2 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: #fff6ff;
+  font-size: clamp(18px, 2.1vw, 26px);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-modal-title-block span {
+  color: rgba(255, 151, 238, .86);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.layer-modal-close {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  z-index: 3;
+}
+.layer-modal-summary {
+  min-width: 0;
+}
+.layer-modal-summary code {
+  max-width: min(360px, 40vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-modal-toolbar {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
+  gap: 10px !important;
+  min-width: 0;
+}
+.layer-modal-toolbar .field,
+.layer-modal-toolbar select {
+  flex: unset !important;
+  min-width: 0;
+  border-radius: 12px;
+}
+.layer-file-table {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  overflow: auto !important;
+  scrollbar-gutter: stable;
+}
+.layer-file-row {
+  box-sizing: border-box;
+}
+.layer-file-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-file-type .mcdf-icon {
+  flex: 0 0 auto;
+}
+@media (max-width: 980px) {
+  .layer-modal-backdrop {
+    padding: 12px;
+  }
+  .layer-inventory-modal {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    min-width: 0;
+    height: calc(100vh - 24px) !important;
+    max-height: calc(100vh - 24px) !important;
+  }
+}
+@media (max-width: 700px) {
+  .layer-modal-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .layer-modal-title-block h2 {
+    white-space: normal;
+  }
+}
