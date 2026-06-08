@@ -1,3 +1,59 @@
+
+## fix198 - Temporary synced package cache
+
+- Treat synced Library MCDF files as temporary app-managed cache, not permanent library storage.
+- Sync source now writes to `temporary-synced-packages` and explains that Export/Download MCDF create permanent user copies.
+- Clear Exchange cache now removes both the new temporary sync cache and the old `synced-packages` folder.
+- Library entries whose temporary cache is cleared fall back to sync-needed behavior instead of implying the package is permanently stored.
+
+
+## fix197 — Library subscription helper order
+
+- Fixed the Library startup/runtime crash caused by resolving subscribed Exchange preview URLs before the local static-index URL helper was initialized.
+- Keeps subscribed Library preview handling unchanged, but moves helper initialization before subscribed rows are created.
+
+
+## fix196 - visible recovery and Library state hardening
+
+- Added a root UI error boundary so malformed browser state no longer leaves only a translucent/blank Tauri window.
+- Added an in-app recovery screen with a one-click browser-state reset that does not delete MCDF files on disk.
+- Hardened Library subscription and sharing-policy normalization so older localStorage records cannot crash the Library render path.
+- Normalized creator/package subscription lists before use.
+
+# Fix 195 - Library load crash hardening
+
+- Hardened Library localStorage entry normalization.
+- Hardened subscribed Exchange snapshot normalization.
+- Hardened public-index package normalization before creating Library subscription rows.
+- Prevented non-array tags/component lists from crashing Library filters and cards.
+
+
+## fix194 - subscribed Exchange add-to-library crash guard
+
+- Hardened Add to My Library for Exchange entries so malformed/older index records cannot crash the client.
+- Normalized persisted Library entries loaded from WebView localStorage.
+- Made Exchange search and subscribed Library rendering tolerate missing tags/component kind arrays.
+- Added an explicit package-subscription refresh event for the Library view.
+
+
+## fix193 - subscribed preview asset build fix
+
+- Fixed a TypeScript build error in the subscribed Exchange-to-Library preview path.
+- The local static index asset resolver is now called with the correct single-argument signature inside Library subscription mapping.
+
+## fix192 - subscribed Exchange preview and sync routing
+
+- Subscribed Exchange entries shown in the Library now keep their static Exchange cover image URL and saved framing metadata so previews render before the MCDF is synced.
+- Subscribed entries now show `sync needed` instead of a vague not-downloaded label.
+- Sync/Download for subscribed Exchange entries now uses the Exchange manifest downloader before generic remote URL handling, so static manifest paths are not mistaken for direct MCDF URLs.
+- Improved the friendly error text for remote MCDF download failures so `builder error` from an invalid/manifest URL is not misclassified as a publish header problem.
+
+## fix191 - Exchange downloads cannot be re-shared by non-owners
+
+- Library entries downloaded or synced from The Eorzea Exchange now carry source-owner provenance.
+- The Publish action is disabled when the package belongs to another Exchange owner, while download, sync, inspect, and export stay available for personal use.
+- The Library detail pane explains why a downloaded Exchange entry cannot be published again by a different publisher.
+
 ## fix189 - release gating for packaged app changes
 
 - Updated the client release workflow so pushes to `main` only mint release packages when packaged application inputs change.
@@ -592,3 +648,9 @@
 - Local preview image changes persist and render correctly.
 - Local entries show `local` status.
 - Exchange visibility is shown separately as public listing state.
+## fix200 - Library detail table cleanup
+
+- Removed the repeated Entry details/Entry actions explanatory copy from the Library detail pane.
+- Removed the verbose non-owner re-share warning text from the normal detail view while preserving publish blocking behavior.
+- Replaced the detail status pills with a compact two-column table so metadata reads like structured information instead of scattered badges.
+- Kept owner/personal-use state in the table and action gating rather than as a large banner.

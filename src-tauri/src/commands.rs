@@ -2915,7 +2915,7 @@ pub fn clear_download_cache() -> Result<CacheClearResult, String> {
     let cache_dir = local_cache::exchange_cache_dir()?;
     let mut removed_dirs = Vec::new();
     let mut notes = Vec::new();
-    for name in ["file-parts", "manifests", "remote-scan-temp"] {
+    for name in ["file-parts", "manifests", "remote-scan-temp", "temporary-synced-packages", "synced-packages"] {
         let path = cache_dir.join(name);
         if path.exists() {
             std::fs::remove_dir_all(&path).map_err(|error| format!("failed to clear {name}: {error}"))?;
@@ -2923,7 +2923,7 @@ pub fn clear_download_cache() -> Result<CacheClearResult, String> {
         }
         std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     }
-    notes.push("Exchange cache cleared. Library entries, settings, client auth, and favorites were not removed.".to_string());
+    notes.push("Exchange cache and temporary synced packages cleared. Library entries, settings, client auth, and favorites were not removed. Entries that depended on temporary synced MCDF files will show sync needed again.".to_string());
     notes.push(format!("Configured downloads folder is {}.", settings.downloads_dir));
     Ok(CacheClearResult { cache_dir: cache_dir.to_string_lossy().to_string(), removed_dirs, notes })
 }

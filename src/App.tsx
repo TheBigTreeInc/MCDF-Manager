@@ -727,6 +727,8 @@ type LocalSharingPolicy = {
 
 const ACCESS_NOTIFICATIONS_KEY = "mcdf.serverAccess.notifications.v1";
 const ADMIN_TOKEN_KEY = "mcdf.archive.adminToken";
+const ADMIN_TOKEN_KIND_KEY = "mcdf.archive.adminToken.kind";
+const UPLOAD_TOKEN_KEY = "mcdf.archive.uploadActionToken";
 const LEGACY_UPLOAD_TOKEN_KEY = "mcdf.archive.uploadToken";
 const EULA_VERSION = "2026-06-02-v1";
 const EULA_ACCEPTED_KEY = "mcdf.eula.acceptedVersion";
@@ -754,14 +756,24 @@ function acceptPublishingRules(): void {
   window.dispatchEvent(new Event("mcdf-publishing-rules-accepted"));
 }
 function storedAdminToken(): string {
-  return (
-    localStorage.getItem(ADMIN_TOKEN_KEY) ||
-    localStorage.getItem(LEGACY_UPLOAD_TOKEN_KEY) ||
-    ""
-  );
+  const token = (localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+  const kind = localStorage.getItem(ADMIN_TOKEN_KIND_KEY) || "";
+  return token && kind === "admin" ? token : "";
+}
+function storedUploadToken(): string {
+  const explicitUploadToken = (localStorage.getItem(UPLOAD_TOKEN_KEY) || "").trim();
+  if (explicitUploadToken) return explicitUploadToken;
+  const legacyUploadToken = (localStorage.getItem(LEGACY_UPLOAD_TOKEN_KEY) || "").trim();
+  if (legacyUploadToken) return legacyUploadToken;
+  const unclassifiedToken = (localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+  const kind = localStorage.getItem(ADMIN_TOKEN_KIND_KEY) || "";
+  // Older builds stored upload tokens in the admin-token slot, which made the
+  // Admin pane appear for normal uploaders. Treat unclassified legacy values as
+  // upload tokens until they are explicitly saved from Settings as admin tokens.
+  return unclassifiedToken && kind !== "admin" ? unclassifiedToken : "";
 }
 function archiveActionToken(): string | null {
-  const token = storedAdminToken().trim();
+  const token = (storedAdminToken() || storedUploadToken()).trim();
   return token || null;
 }
 async function loadAdminTokenFromConfig(): Promise<string> {
@@ -770,12 +782,11 @@ async function loadAdminTokenFromConfig(): Promise<string> {
       "get_storage_settings",
     );
     const token = (settings.admin_token || "").trim();
-    if (token) {
+    if (token && localStorage.getItem(ADMIN_TOKEN_KIND_KEY) === "admin") {
       localStorage.setItem(ADMIN_TOKEN_KEY, token);
-      localStorage.setItem(LEGACY_UPLOAD_TOKEN_KEY, token);
       window.dispatchEvent(new Event("mcdf-admin-token-changed"));
     }
-    return token;
+    return storedAdminToken();
   } catch {
     return storedAdminToken();
   }
@@ -784,10 +795,10 @@ async function saveAdminToken(value: string): Promise<void> {
   const token = value.trim();
   if (token) {
     localStorage.setItem(ADMIN_TOKEN_KEY, token);
-    localStorage.setItem(LEGACY_UPLOAD_TOKEN_KEY, token);
+    localStorage.setItem(ADMIN_TOKEN_KIND_KEY, "admin");
   } else {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
-    localStorage.removeItem(LEGACY_UPLOAD_TOKEN_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_KIND_KEY);
   }
   try {
     await invoke<StorageSettingsResponse>("save_storage_settings", {
@@ -797,6 +808,22 @@ async function saveAdminToken(value: string): Promise<void> {
     console.warn("admin token config save failed", error);
   }
   window.dispatchEvent(new Event("mcdf-admin-token-changed"));
+}
+function saveUploadToken(value: string): void {
+  const token = value.trim();
+  if (token) {
+    localStorage.setItem(UPLOAD_TOKEN_KEY, token);
+    localStorage.setItem(LEGACY_UPLOAD_TOKEN_KEY, token);
+    if (localStorage.getItem(ADMIN_TOKEN_KIND_KEY) !== "admin") {
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+      localStorage.removeItem(ADMIN_TOKEN_KIND_KEY);
+    }
+  } else {
+    localStorage.removeItem(UPLOAD_TOKEN_KEY);
+    localStorage.removeItem(LEGACY_UPLOAD_TOKEN_KEY);
+  }
+  window.dispatchEvent(new Event("mcdf-admin-token-changed"));
+  window.dispatchEvent(new Event("mcdf-upload-token-changed"));
 }
 function readAccessNotifications(): AccessRequestNotification[] {
   try {
@@ -1019,6 +1046,9 @@ function generateFakeLibraryEntries(count: number): LocalMcdfEntry[] {
       source_type: "indexed",
       source_url: null,
       source_label: "Debug fake local entry",
+      source_owner_public_id: null,
+      source_owner_display_name: null,
+      source_package_hash_blake3: null,
       remote_annotation: "Fake local Library entry for UI stress testing. It is not saved to your real Library.",
       missing_registry_percent: null,
       original_filename: `debug-library-entry-${String(n).padStart(3, "0")}.mcdf`,
@@ -1052,11 +1082,9 @@ function storageSetupAcknowledged(): boolean {
 function acknowledgeStorageSetup() {
   localStorage.setItem(STORAGE_SETUP_ACK_KEY, "yes");
 }
-function isAdultByTags(tags?: string[]): boolean {
-  return Boolean(
-    (tags || []).some((tag) =>
-      ["18+", "nsfw", "adult", "explicit"].includes(tag.toLowerCase()),
-    ),
+function isAdultByTags(tags?: unknown): boolean {
+  return stringArray(tags).some((tag) =>
+    ["18+", "nsfw", "adult", "explicit"].includes(tag.toLowerCase()),
   );
 }
 function entryIsAdult(
@@ -1340,6 +1368,9 @@ type LocalMcdfEntry = {
   source_type?: LocalMcdfSourceType;
   source_url?: string | null;
   source_label?: string | null;
+  source_owner_public_id?: string | null;
+  source_owner_display_name?: string | null;
+  source_package_hash_blake3?: string | null;
   remote_annotation?: string | null;
   missing_registry_percent?: number | null;
   original_filename: string;
@@ -1522,13 +1553,22 @@ function storedPublisherPublicId(): string {
       "",
   );
 }
+function ownerIdentityKey(value?: string | null): string {
+  const trimmed = (value || "").trim().toLowerCase();
+  if (!trimmed) return "";
+  return trimmed.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function currentPublisherOwnerKey(): string {
+  return ownerIdentityKey(storedPublisherProofId()) || ownerIdentityKey(storedPublisherPublicId());
+}
 function storedPublisherPermissions(
   connected: boolean,
   authorized: boolean,
 ): string {
   if (!authorized) return "";
   const isAdmin = Boolean(storedAdminToken().trim());
-  const role = isAdmin ? "Admin · publisher" : "Publisher";
+  const isUploader = Boolean(storedUploadToken().trim());
+  const role = isAdmin ? "Admin · uploader" : isUploader ? "Uploader" : "Publisher";
   return connected ? `${role} · connected` : `${role} · ready`;
 }
 
@@ -1638,26 +1678,26 @@ function readCreatorSubscriptions(): string[] {
     const parsed = JSON.parse(
       localStorage.getItem(CREATOR_SUBSCRIPTIONS_KEY) || "[]",
     );
-    return Array.isArray(parsed) ? parsed : [];
+    return stringArray(parsed);
   } catch {
     return [];
   }
 }
 function writeCreatorSubscriptions(ids: string[]) {
-  localStorage.setItem(CREATOR_SUBSCRIPTIONS_KEY, JSON.stringify(ids));
+  localStorage.setItem(CREATOR_SUBSCRIPTIONS_KEY, JSON.stringify(stringArray(ids)));
 }
 function readPackageSubscriptions(): string[] {
   try {
     const parsed = JSON.parse(
       localStorage.getItem(PACKAGE_SUBSCRIPTIONS_KEY) || "[]",
     );
-    return Array.isArray(parsed) ? parsed : [];
+    return stringArray(parsed);
   } catch {
     return [];
   }
 }
 function writePackageSubscriptions(ids: string[]) {
-  localStorage.setItem(PACKAGE_SUBSCRIPTIONS_KEY, JSON.stringify(ids));
+  localStorage.setItem(PACKAGE_SUBSCRIPTIONS_KEY, JSON.stringify(stringArray(ids)));
 }
 type PackageSubscriptionSnapshot = {
   package_hash_blake3: string;
@@ -1689,9 +1729,15 @@ function readPackageSubscriptionSnapshots(): Record<
     const parsed = JSON.parse(
       localStorage.getItem(PACKAGE_SUBSCRIPTION_SNAPSHOTS_KEY) || "{}",
     );
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.entries(parsed).reduce<Record<string, PackageSubscriptionSnapshot>>(
+      (result, [hash, value]) => {
+        const snapshot = normalizePackageSubscriptionSnapshot(value, hash);
+        if (snapshot) result[snapshot.package_hash_blake3] = snapshot;
+        return result;
+      },
+      {},
+    );
   } catch {
     return {};
   }
@@ -1707,34 +1753,68 @@ function writePackageSubscriptionSnapshots(
 function packageSnapshotFromIndex(
   pkg: PublicIndexPackageSummary | PublicPackageRecord,
 ): PackageSubscriptionSnapshot {
-  const summary = pkg as PublicIndexPackageSummary;
-  const record = pkg as PublicPackageRecord;
+  const summary = pkg as Partial<PublicIndexPackageSummary>;
+  const record = pkg as Partial<PublicPackageRecord>;
+  const packageHash = safeString(pkg.package_hash_blake3);
+  const originalFilename = safeString(pkg.original_filename || pkg.title, `${packageHash || "exchange"}.mcdf`);
   return {
-    package_hash_blake3: pkg.package_hash_blake3,
+    package_hash_blake3: packageHash,
     subscribed_at: new Date().toISOString(),
-    original_filename: pkg.original_filename,
-    title: pkg.title || pkg.original_filename,
-    description: pkg.description || "",
-    tags: pkg.tags || [],
-    preview_image_path: pkg.preview_image_path || null,
+    original_filename: originalFilename,
+    title: safeString(pkg.title || originalFilename, originalFilename),
+    description: safeString(pkg.description),
+    tags: stringArray(pkg.tags),
+    preview_image_path: nullableString(pkg.preview_image_path),
+    preview_crop: normalizePreviewCropValue(pkg.preview_crop),
     is_adult: Boolean(pkg.is_adult),
-    visibility: (pkg.visibility as McdfVisibility) || "public",
-    owner_public_id: summary.owner_public_id || record.owner?.public_id || null,
-    owner_display_name:
-      summary.owner_display_name || record.owner?.display_name || null,
-    file_count: pkg.file_count || 0,
-    total_file_bytes: pkg.total_file_bytes || 0,
-    component_kinds: summary.component_kinds || [],
-    package_manifest_path: summary.package_manifest_path || null,
-    download_manifest_path: summary.download_manifest_path || null,
-    updated_at: summary.updated_at || null,
+    visibility: normalizeMcdfVisibilityValue(pkg.visibility),
+    owner_public_id: nullableString(summary.owner_public_id || record.owner?.public_id),
+    owner_display_name: nullableString(summary.owner_display_name || record.owner?.display_name),
+    file_count: finiteNumber(pkg.file_count),
+    total_file_bytes: finiteNumber(pkg.total_file_bytes),
+    component_kinds: stringArray(summary.component_kinds),
+    package_manifest_path: nullableString(summary.package_manifest_path),
+    download_manifest_path: nullableString(summary.download_manifest_path),
+    updated_at: nullableString(summary.updated_at),
+  };
+}
+function normalizePackageSubscriptionSnapshot(
+  value: unknown,
+  fallbackHash?: string,
+): PackageSubscriptionSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const snapshot = value as Partial<PackageSubscriptionSnapshot>;
+  const packageHash = safeString(snapshot.package_hash_blake3 || fallbackHash);
+  if (!packageHash) return null;
+  const originalFilename = safeString(snapshot.original_filename || snapshot.title, `${packageHash.slice(0, 12)}.mcdf`);
+  return {
+    package_hash_blake3: packageHash,
+    subscribed_at: safeString(snapshot.subscribed_at, new Date().toISOString()),
+    original_filename: originalFilename,
+    title: safeString(snapshot.title || originalFilename, originalFilename),
+    description: safeString(snapshot.description),
+    tags: stringArray(snapshot.tags),
+    preview_image_path: nullableString(snapshot.preview_image_path),
+    preview_crop: normalizePreviewCropValue(snapshot.preview_crop),
+    is_adult: Boolean(snapshot.is_adult),
+    visibility: normalizeMcdfVisibilityValue(snapshot.visibility),
+    owner_public_id: nullableString(snapshot.owner_public_id),
+    owner_display_name: nullableString(snapshot.owner_display_name),
+    file_count: finiteNumber(snapshot.file_count),
+    total_file_bytes: finiteNumber(snapshot.total_file_bytes),
+    component_kinds: stringArray(snapshot.component_kinds),
+    package_manifest_path: nullableString(snapshot.package_manifest_path),
+    download_manifest_path: nullableString(snapshot.download_manifest_path),
+    updated_at: nullableString(snapshot.updated_at),
   };
 }
 function rememberPackageSubscriptionSnapshot(
   pkg: PublicIndexPackageSummary | PublicPackageRecord,
 ) {
+  const snapshot = packageSnapshotFromIndex(pkg);
+  if (!snapshot.package_hash_blake3) return;
   const snapshots = readPackageSubscriptionSnapshots();
-  snapshots[pkg.package_hash_blake3] = packageSnapshotFromIndex(pkg);
+  snapshots[snapshot.package_hash_blake3] = snapshot;
   writePackageSubscriptionSnapshots(snapshots);
 }
 function removePackageSubscriptionSnapshot(packageHash: string) {
@@ -1750,21 +1830,21 @@ type CreatorPackageIdentity = {
   owner?: { public_id?: string | null; display_name?: string | null } | null;
 };
 function creatorKeyFromPackage(pkg: CreatorPackageIdentity): string {
-  return (
+  return safeString(
     pkg.owner_public_id ||
-    pkg.owner?.public_id ||
-    pkg.owner_display_name ||
-    pkg.owner?.display_name ||
-    "unknown"
+      pkg.owner?.public_id ||
+      pkg.owner_display_name ||
+      pkg.owner?.display_name,
+    "unknown",
   );
 }
 function creatorLabelFromPackage(pkg: CreatorPackageIdentity): string {
-  return (
+  return safeString(
     pkg.owner_display_name ||
-    pkg.owner?.display_name ||
-    pkg.owner_public_id ||
-    pkg.owner?.public_id ||
-    "Unknown creator"
+      pkg.owner?.display_name ||
+      pkg.owner_public_id ||
+      pkg.owner?.public_id,
+    "Unknown creator",
   );
 }
 const LOCAL_LIBRARY_STORAGE_KEY = "mcdf.localLibrary.entries.v1";
@@ -1773,13 +1853,192 @@ function readLocalMcdfLibrary(): LocalMcdfEntry[] {
     const parsed = JSON.parse(
       localStorage.getItem(LOCAL_LIBRARY_STORAGE_KEY) || "[]",
     );
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? parsed
+          .map((entry) => normalizeLocalMcdfEntry(entry))
+          .filter((entry): entry is LocalMcdfEntry => Boolean(entry))
+      : [];
   } catch {
     return [];
   }
 }
 function writeLocalMcdfLibrary(entries: LocalMcdfEntry[]) {
   localStorage.setItem(LOCAL_LIBRARY_STORAGE_KEY, JSON.stringify(entries));
+}
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[;,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+function safeString(value: unknown, fallback = ""): string {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+function nullableString(value: unknown): string | null {
+  const text = safeString(value);
+  return text || null;
+}
+function finiteNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function normalizeLocalSourceType(value: unknown, fallback: LocalMcdfSourceType): LocalMcdfSourceType {
+  return value === "local_file" || value === "google_drive" || value === "direct_url" || value === "indexed"
+    ? value
+    : fallback;
+}
+function normalizeLocalStorageState(value: unknown): LocalMcdfStorageState {
+  return value === "offline" || value === "server" || value === "online" || value === "subscribed" || value === "removed" || value === "failed"
+    ? value
+    : "offline";
+}
+function normalizeMcdfVisibilityValue(value: unknown): McdfVisibility {
+  return value === "locked" || value === "private" || value === "public" ? value : "public";
+}
+function normalizePreviewCropValue(value: unknown): PreviewCrop | null {
+  if (!value || typeof value !== "object") return null;
+  const crop = value as Partial<PreviewCrop>;
+  return normalizePreviewCrop({
+    x: finiteNumber(crop.x, 0),
+    y: finiteNumber(crop.y, 0),
+    scale: finiteNumber(crop.scale, 1),
+  });
+}
+function normalizeSharingClassificationValue(
+  value: unknown,
+): LocalSharingClassification {
+  return value === "restricted" ||
+    value === "blocked_by_policy" ||
+    value === "potentially_illegal" ||
+    value === "allowed"
+    ? value
+    : "blocked_by_policy";
+}
+function normalizeModerationMatchValue(value: unknown): LocalModerationMatch | null {
+  if (!value || typeof value !== "object") return null;
+  const match = value as Partial<LocalModerationMatch>;
+  const targetType = match.target_type === "package" ? "package" : "file";
+  const hash = safeString(match.hash_blake3);
+  if (!hash) return null;
+  return {
+    target_type: targetType,
+    hash_blake3: hash,
+    category: safeString(match.category),
+    reason: safeString(match.reason, "Policy match"),
+    classification: normalizeSharingClassificationValue(match.classification),
+    file_path: nullableString(match.file_path),
+    file_index:
+      typeof match.file_index === "number" && Number.isFinite(match.file_index)
+        ? match.file_index
+        : null,
+    file_length:
+      typeof match.file_length === "number" && Number.isFinite(match.file_length)
+        ? match.file_length
+        : null,
+    created_at: nullableString(match.created_at),
+  };
+}
+function normalizeLocalSharingPolicyValue(value: unknown): LocalSharingPolicy | null {
+  if (!value || typeof value !== "object") return null;
+  const policy = value as Partial<LocalSharingPolicy>;
+  const matches = Array.isArray(policy.matches)
+    ? policy.matches
+        .map((match) => normalizeModerationMatchValue(match))
+        .filter((match): match is LocalModerationMatch => Boolean(match))
+    : [];
+  const status: LocalSharingStatus =
+    policy.status === "blocked" || matches.length > 0 ? "blocked" : "allowed";
+  if (status === "allowed") return null;
+  const classification = normalizeSharingClassificationValue(policy.classification);
+  return {
+    status,
+    classification,
+    label: safeString(policy.label, sharingClassificationLabel(classification)),
+    summary: safeString(
+      policy.summary,
+      matches.length
+        ? "This entry matches a sharing policy rule."
+        : "This entry is blocked by policy.",
+    ),
+    checked_at: nullableString(policy.checked_at),
+    matches,
+  };
+}
+function normalizeLocalMcdfEntry(value: unknown): LocalMcdfEntry | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Partial<LocalMcdfEntry>;
+  const id = safeString(entry.id || entry.package_hash_blake3 || entry.local_path);
+  if (!id) return null;
+  const localPath = safeString(entry.local_path);
+  return {
+    id,
+    local_path: localPath,
+    source_type: normalizeLocalSourceType(entry.source_type, localPath ? "local_file" : "indexed"),
+    source_url: nullableString(entry.source_url),
+    source_label: nullableString(entry.source_label),
+    source_owner_public_id: nullableString(entry.source_owner_public_id),
+    source_owner_display_name: nullableString(entry.source_owner_display_name),
+    source_package_hash_blake3: nullableString(entry.source_package_hash_blake3),
+    remote_annotation: nullableString(entry.remote_annotation),
+    missing_registry_percent: typeof entry.missing_registry_percent === "number" ? entry.missing_registry_percent : null,
+    original_filename: safeString(entry.original_filename || entry.title, "Untitled.mcdf"),
+    title: safeString(entry.title || entry.original_filename, "Untitled MCDF"),
+    description: safeString(entry.description),
+    tags: stringArray(entry.tags),
+    preview_image_path: nullableString(entry.preview_image_path),
+    preview_crop: normalizePreviewCropValue(entry.preview_crop),
+    is_adult: Boolean(entry.is_adult),
+    visibility: normalizeMcdfVisibilityValue(entry.visibility),
+    package_hash_blake3: nullableString(entry.package_hash_blake3),
+    file_count: finiteNumber(entry.file_count),
+    total_file_bytes: finiteNumber(entry.total_file_bytes),
+    component_kinds: stringArray(entry.component_kinds),
+    file_manifest: Array.isArray(entry.file_manifest) ? entry.file_manifest : [],
+    sharing_policy: normalizeLocalSharingPolicyValue(entry.sharing_policy),
+    storage_state: normalizeLocalStorageState(entry.storage_state),
+    last_checked_at: nullableString(entry.last_checked_at),
+    last_published_at: nullableString(entry.last_published_at),
+    manifest_url: nullableString(entry.manifest_url),
+    download_url: nullableString(entry.download_url),
+    notes: stringArray(entry.notes),
+  };
+}
+
+function normalizePublicIndexPackageSummary(value: unknown): PublicIndexPackageSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const pkg = value as Partial<PublicIndexPackageSummary>;
+  const hash = safeString(pkg.package_hash_blake3);
+  if (!hash) return null;
+  const filename = safeString(pkg.original_filename || pkg.title, `${hash.slice(0, 12)}.mcdf`);
+  return {
+    package_hash_blake3: hash,
+    share_id: safeString(pkg.share_id) || hash,
+    share_code: safeString(pkg.share_code),
+    original_filename: filename,
+    title: safeString(pkg.title || filename, filename),
+    description: safeString(pkg.description),
+    tags: stringArray(pkg.tags),
+    preview_image_available: Boolean(pkg.preview_image_available || pkg.preview_image_path),
+    preview_image_path: nullableString(pkg.preview_image_path),
+    preview_crop: normalizePreviewCropValue(pkg.preview_crop),
+    is_adult: Boolean(pkg.is_adult),
+    visibility: safeString(pkg.visibility, "public"),
+    owner_display_name: safeString(pkg.owner_display_name, "Unknown creator"),
+    owner_public_id: safeString(pkg.owner_public_id || pkg.owner_display_name, "unknown"),
+    file_count: finiteNumber(pkg.file_count),
+    total_file_bytes: finiteNumber(pkg.total_file_bytes),
+    component_kinds: stringArray(pkg.component_kinds),
+    package_manifest_path: safeString(pkg.package_manifest_path),
+    download_manifest_path: safeString(pkg.download_manifest_path),
+    updated_at: safeString(pkg.updated_at),
+  };
 }
 function localEntryHasLocalFile(entry: LocalMcdfEntry | null | undefined): boolean {
   return Boolean(
@@ -1805,7 +2064,7 @@ function safeDownloadFilename(name: string): string {
 function stateLabel(state: LocalMcdfStorageState): string {
   if (state === "online") return "online";
   if (state === "server") return "not listed";
-  if (state === "subscribed") return "not downloaded";
+  if (state === "subscribed") return "sync needed";
   if (state === "removed") return "removed from Exchange";
   if (state === "failed") return "needs attention";
   return "on device";
@@ -1850,8 +2109,8 @@ function compactSourceLabel(entry: LocalMcdfEntry): string {
   if (entry.source_type === "indexed") return "Index";
   return "Device";
 }
-function packageLabelsFromKinds(kinds?: string[]): string[] {
-  return Array.from(new Set((kinds || []).filter(Boolean))).slice(0, 8);
+function packageLabelsFromKinds(kinds?: unknown): string[] {
+  return Array.from(new Set(stringArray(kinds))).slice(0, 8);
 }
 function fileManifestFromExtractedFiles(
   files: ExtractedFileInfo[],
@@ -1997,7 +2256,7 @@ function sharingPolicyForEntry(
   };
 }
 function localEntryManualTags(entry: Pick<LocalMcdfEntry, "tags">): string[] {
-  return Array.from(new Set((entry.tags || []).filter(Boolean))).slice(0, 8);
+  return Array.from(new Set(stringArray(entry.tags))).slice(0, 8);
 }
 function localEntrySystemLabels(
   entry: Pick<LocalMcdfEntry, "component_kinds" | "sharing_policy">,
@@ -2273,8 +2532,11 @@ function statusClass(status: string): string {
 
 function friendlyErrorSummary(error: string): string {
   const normalized = error.toLowerCase();
+  if (normalized.includes("failed to download a valid remote mcdf")) {
+    return "Remote MCDF source could not be downloaded.";
+  }
   if (normalized.includes("invalid header") || normalized.includes("builder error")) {
-    return "Publish request could not be built.";
+    return "Request could not be built.";
   }
   if (normalized.includes("preview image") && normalized.includes("could not be prepared")) {
     return "Preview image could not be prepared.";
@@ -2299,8 +2561,11 @@ function friendlyErrorSummary(error: string): string {
 
 function technicalReason(error: string): string {
   const normalized = error.toLowerCase();
+  if (normalized.includes("failed to download a valid remote mcdf")) {
+    return "The client tried to read an internet source as an MCDF file, but the source did not return valid MCDF bytes. For subscribed Exchange entries this usually means the client used a manifest path as if it were a direct MCDF URL; update to the build that routes subscribed entries through the Exchange manifest downloader.";
+  }
   if (normalized.includes("invalid header") || normalized.includes("builder error")) {
-    return "The local HTTP client rejected the publish request before it was sent. The most common cause is an invalid or oversized HTTP header, especially a multiline publisher certificate or metadata that was put into a header.";
+    return "The local HTTP client rejected the request before it was sent. The most common cause is an invalid URL/header or oversized metadata.";
   }
   if (normalized.includes("preview image is too large")) {
     return "The selected preview image is above the client preview limit.";
@@ -2319,12 +2584,20 @@ function technicalReason(error: string): string {
 
 function likelyFix(error: string): string {
   const normalized = error.toLowerCase();
+  if (normalized.includes("failed to download a valid remote mcdf")) {
+    return [
+      "1. If this is a subscribed Exchange entry, use Sync source again after updating the client; it should use the Exchange manifest downloader, not a direct URL downloader.",
+      "2. If this is a Google Drive/direct URL entry, open the link in a browser and confirm it downloads an .mcdf file instead of an HTML page.",
+      "3. For Google Drive, make sure the file is shared as anyone-with-link and use the normal /file/d/<id>/view link.",
+      "4. Use Download MCDF directly to test the source before publishing or exporting.",
+    ].join("\n");
+  }
   if (normalized.includes("invalid header") || normalized.includes("builder error")) {
     return [
-      "1. Update the registry server to the build that accepts header-safe publisher certificates.",
-      "2. Try publishing again with the same preview image; the client now sends multiline certificates through a safe header.",
-      "3. If it still fails, remove the preview and publish once. If that works, re-add the preview after the package is registered.",
-      "4. Check the details below for the failing publish step and whether a preview path/certificate was present.",
+      "1. Update the client and registry server to the latest build.",
+      "2. Try the action again with the same preview image and publisher identity.",
+      "3. If it still fails, remove the preview and retry once to separate metadata/header issues from package handling.",
+      "4. Copy the raw details into the issue/report.",
     ].join("\n");
   }
   if (normalized.includes("preview image")) {
@@ -3648,34 +3921,39 @@ function AddMcdfEntryModal({
     return hashOnly ? value.toLowerCase() : null;
   };
   const entryFromPublicPackage = (pkg: PublicIndexPackageSummary | PublicPackageRecord, extraTag?: string): LocalMcdfEntry => {
-    const hash = pkg.package_hash_blake3;
-    const tags = Array.from(new Set([...(pkg.tags || []), ...(extraTag ? [extraTag] : [])]));
-    const componentKinds = "component_kinds" in pkg ? (pkg.component_kinds || []) : [];
+    const normalized = "owner" in pkg ? null : normalizePublicIndexPackageSummary(pkg);
+    const hash = safeString(pkg.package_hash_blake3 || normalized?.package_hash_blake3);
+    if (!hash) throw new Error("The shared entry is missing a package hash and cannot be added to the Library.");
+    const tags = Array.from(new Set([...stringArray(pkg.tags), ...(extraTag ? [extraTag] : [])]));
+    const componentKinds = "component_kinds" in pkg ? stringArray(pkg.component_kinds) : [];
     return {
       id: `shared-${hash.slice(0, 24)}`,
       local_path: "",
       source_type: "indexed",
       source_url: publicAssetUrl((pkg as PublicIndexPackageSummary).download_manifest_path || (pkg as PublicIndexPackageSummary).package_manifest_path) || null,
       source_label: "Shared MCDF",
+      source_owner_public_id: (pkg as PublicIndexPackageSummary).owner_public_id || (pkg as PublicPackageRecord).owner?.public_id || null,
+      source_owner_display_name: (pkg as PublicIndexPackageSummary).owner_display_name || (pkg as PublicPackageRecord).owner?.display_name || null,
+      source_package_hash_blake3: hash,
       remote_annotation: "Imported from an MCDF Manager share code. Download the MCDF when you want a local copy.",
       missing_registry_percent: null,
-      original_filename: pkg.original_filename,
-      title: pkg.title || pkg.original_filename,
-      description: pkg.description || "",
+      original_filename: safeString(pkg.original_filename || pkg.title, `${pkg.package_hash_blake3.slice(0, 12)}.mcdf`),
+      title: safeString(pkg.title || pkg.original_filename, "Untitled MCDF"),
+      description: safeString(pkg.description),
       tags,
       preview_image_path: publicAssetUrl(pkg.preview_image_path),
-      preview_crop: null,
+      preview_crop: normalizePreviewCropValue(pkg.preview_crop),
       is_adult: Boolean(pkg.is_adult),
-      visibility: (pkg.visibility as McdfVisibility) || "public",
+      visibility: normalizeMcdfVisibilityValue(pkg.visibility),
       package_hash_blake3: hash,
-      file_count: pkg.file_count,
-      total_file_bytes: pkg.total_file_bytes,
+      file_count: finiteNumber(pkg.file_count),
+      total_file_bytes: finiteNumber(pkg.total_file_bytes),
       component_kinds: componentKinds,
-      file_manifest: "files" in pkg ? (pkg.files || []).map((file) => ({
-        index: file.index ?? 0,
-        game_paths: file.game_paths || [],
-        length: file.length || 0,
-        payload_blake3: file.payload_blake3 || "",
+      file_manifest: "files" in pkg && Array.isArray(pkg.files) ? pkg.files.map((file) => ({
+        index: finiteNumber(file.index),
+        game_paths: stringArray(file.game_paths),
+        length: finiteNumber(file.length),
+        payload_blake3: safeString(file.payload_blake3),
       })) : [],
       sharing_policy: null,
       storage_state: "subscribed",
@@ -3727,7 +4005,10 @@ function AddMcdfEntryModal({
         }
         const shareId = shareIdFromInput(raw);
         if (shareId) {
-          pkg = latest.packages.find((candidate) =>
+          const normalizedPackages = (Array.isArray(latest.packages) ? latest.packages : [])
+            .map((candidate) => normalizePublicIndexPackageSummary(candidate))
+            .filter((candidate): candidate is PublicIndexPackageSummary => Boolean(candidate));
+          pkg = normalizedPackages.find((candidate) =>
             candidate.package_hash_blake3.toLowerCase() === shareId ||
             candidate.share_id?.toLowerCase() === shareId ||
             candidate.share_code?.toLowerCase() === raw.toLowerCase(),
@@ -4134,7 +4415,7 @@ function OnlineLibraryPanel({
     PUBLIC_INDEX_LATEST_URL,
   );
   const [serverUrl] = useState(configuredArchiveHost());
-  const [serverToken] = useState(storedAdminToken());
+  const [serverToken] = useState(archiveActionToken() || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -4215,10 +4496,19 @@ function OnlineLibraryPanel({
       .map((entry) => entry.package_hash_blake3)
       .filter(Boolean) as string[],
   );
+  const publicPackages = (Array.isArray(publicIndex?.packages) ? publicIndex.packages : [])
+    .map((pkg) => normalizePublicIndexPackageSummary(pkg))
+    .filter((pkg): pkg is PublicIndexPackageSummary => Boolean(pkg));
   const publicPackagesByHash = new Map<string, PublicIndexPackageSummary>(
-    (publicIndex?.packages || []).map((pkg) => [pkg.package_hash_blake3, pkg]),
+    publicPackages.map((pkg) => [pkg.package_hash_blake3, pkg]),
   );
-  const activeSubscribedPackages = (publicIndex?.packages || [])
+  const publicIndexAssetUrl = (path?: string | null): string | null => {
+    if (!path) return null;
+    if (/^https?:\/\//i.test(path)) return path;
+    const base = indexUrl.replace(/\/indexes\/latest\.json(?:\?.*)?$/i, "");
+    return `${base}/${path.replace(/^\/+/, "")}`;
+  };
+  const activeSubscribedPackages = publicPackages
     .filter(
       (pkg) =>
         (packageSubscriptions.includes(pkg.package_hash_blake3) ||
@@ -4238,10 +4528,11 @@ function OnlineLibraryPanel({
         packageSubscriptionSnapshots[hash],
     )
     .map((hash) => ({
-      pkg: packageSubscriptionSnapshots[hash],
+      pkg: normalizePackageSubscriptionSnapshot(packageSubscriptionSnapshots[hash], hash),
       removed: true,
-      snapshot: packageSubscriptionSnapshots[hash],
-    }));
+      snapshot: normalizePackageSubscriptionSnapshot(packageSubscriptionSnapshots[hash], hash),
+    }))
+    .filter((item): item is { pkg: PackageSubscriptionSnapshot; removed: true; snapshot: PackageSubscriptionSnapshot } => Boolean(item.pkg));
   const subscribedIndexEntries: LocalMcdfEntry[] = [
     ...activeSubscribedPackages,
     ...removedSubscribedPackages,
@@ -4251,37 +4542,43 @@ function OnlineLibraryPanel({
       id: `${removed ? "removed" : "subscribed"}-${pkg.package_hash_blake3.slice(0, 24)}`,
       local_path: "",
       source_type: "indexed" as LocalMcdfSourceType,
-      source_url: removed ? null : pkg.download_manifest_path || null,
+      // Exchange subscriptions are backed by static package manifests, not direct
+      // remote MCDF URLs. Keep source_url empty so generic URL code never tries to
+      // download the manifest path as if it were an MCDF file.
+      source_url: null,
       source_label: removed
         ? "Removed Exchange item"
         : packageSubscriptions.includes(pkg.package_hash_blake3)
           ? "Subscribed MCDF"
           : "Subscribed creator",
+      source_owner_public_id: summary.owner_public_id || null,
+      source_owner_display_name: summary.owner_display_name || null,
+      source_package_hash_blake3: pkg.package_hash_blake3,
       remote_annotation: removed
         ? "This online MCDF was removed from The Eorzea Exchange after you subscribed to it. It remains here as a local subscription record so you can see what changed."
         : packageSubscriptions.includes(pkg.package_hash_blake3)
           ? "This online MCDF was added to My Library locally. It has not been downloaded to this machine yet."
           : "This item is from a subscribed creator in The Eorzea Exchange. It is listed in My Library so you can track it, but it has not been downloaded to this machine yet.",
       missing_registry_percent: null,
-      original_filename: pkg.original_filename,
-      title: pkg.title || pkg.original_filename,
+      original_filename: safeString(pkg.original_filename || pkg.title, `${pkg.package_hash_blake3.slice(0, 12)}.mcdf`),
+      title: safeString(pkg.title || pkg.original_filename, "Untitled MCDF"),
       description: pkg.description || "",
-      tags: pkg.tags || [],
-      preview_image_path: pkg.preview_image_path || null,
-      preview_crop: null,
+      tags: stringArray(pkg.tags),
+      preview_image_path: publicIndexAssetUrl(pkg.preview_image_path) || pkg.preview_image_path || null,
+      preview_crop: normalizePreviewCropValue(pkg.preview_crop),
       is_adult: Boolean(pkg.is_adult),
-      visibility: (pkg.visibility as McdfVisibility) || "public",
+      visibility: normalizeMcdfVisibilityValue(pkg.visibility),
       package_hash_blake3: pkg.package_hash_blake3,
-      file_count: pkg.file_count,
-      total_file_bytes: pkg.total_file_bytes,
-      component_kinds: summary.component_kinds || [],
+      file_count: finiteNumber(pkg.file_count),
+      total_file_bytes: finiteNumber(pkg.total_file_bytes),
+      component_kinds: stringArray(summary.component_kinds),
       file_manifest: [],
       sharing_policy: null,
       storage_state: (removed
         ? "removed"
         : "subscribed") as LocalMcdfStorageState,
-      last_checked_at: pkg.updated_at,
-      last_published_at: pkg.updated_at,
+      last_checked_at: nullableString(pkg.updated_at),
+      last_published_at: nullableString(pkg.updated_at),
       manifest_url: removed ? null : pkg.package_manifest_path,
       download_url: removed ? null : pkg.download_manifest_path,
       notes: [
@@ -4331,11 +4628,37 @@ function OnlineLibraryPanel({
       entry.storage_state !== "removed" &&
       (entry.visibility || "public") === "public",
     );
-  const publicIndexAssetUrl = (path?: string | null): string | null => {
-    if (!path) return null;
-    if (/^https?:\/\//i.test(path)) return path;
-    const base = indexUrl.replace(/\/indexes\/latest\.json(?:\?.*)?$/i, "");
-    return `${base}/${path.replace(/^\/+/, "")}`;
+  const exchangeOwnerForEntry = (entry: LocalMcdfEntry): { publicId: string; displayName: string } | null => {
+    const publicRecord = entry.package_hash_blake3
+      ? publicPackagesByHash.get(entry.package_hash_blake3)
+      : null;
+    const publicId =
+      publicRecord?.owner_public_id ||
+      entry.source_owner_public_id ||
+      "";
+    const displayName =
+      publicRecord?.owner_display_name ||
+      entry.source_owner_display_name ||
+      publicId;
+    return publicId ? { publicId, displayName } : null;
+  };
+  const entryReshareBlockReason = (entry: LocalMcdfEntry): string | null => {
+    const owner = exchangeOwnerForEntry(entry);
+    if (!owner) return null;
+    const ownerKey = ownerIdentityKey(owner.publicId);
+    const currentKey = currentPublisherOwnerKey();
+    if (!ownerKey || !currentKey || ownerKey === currentKey) return null;
+    return `This package is already an Exchange entry by ${owner.displayName || owner.publicId}. You can download, sync, and export it for personal use, but only the original owner can publish or re-share it on The Eorzea Exchange.`;
+  };
+  const librarySharingLabel = (entry: LocalMcdfEntry): string => {
+    if (entry.sharing_policy?.status === "blocked") return "Disallowed";
+    if (entryReshareBlockReason(entry)) return "Personal use";
+    return "Can share";
+  };
+  const librarySharingClass = (entry: LocalMcdfEntry): string => {
+    if (entry.sharing_policy?.status === "blocked") return "no loud";
+    if (entryReshareBlockReason(entry)) return "partial";
+    return "yes quiet";
   };
   const shareIdForEntry = (entry: LocalMcdfEntry): string | null => {
     const pkg = entry.package_hash_blake3
@@ -4358,7 +4681,7 @@ function OnlineLibraryPanel({
       : entry.storage_state === "removed"
         ? "removed"
         : entry.storage_state === "subscribed"
-          ? "not downloaded"
+          ? "sync needed"
           : "not listed";
   const entryPublicClass = (entry: LocalMcdfEntry): string =>
     entryListedPublicly(entry)
@@ -4380,55 +4703,27 @@ function OnlineLibraryPanel({
       : entry.storage_state === "online" && !entryListedPublicly(entry)
         ? "status-warn"
         : stateClass(entry.storage_state);
-  const detailStatusPills = (
+  const detailTableRows = (
     entry: LocalMcdfEntry,
-  ): Array<{ label: string; className: string }> => {
-    const candidates = [
-      ...(entryHasLocalFile(entry)
-        ? []
-        : [
-            {
-              label: entryStatusLabel(entry),
-              className: entryStatusClass(entry),
-            },
-          ]),
-      ...(entryListedPublicly(entry) ||
-      entry.storage_state === "removed" ||
-      entry.storage_state === "subscribed"
-        ? [
-            {
-              label: entryPublicLabel(entry),
-              className: entryPublicClass(entry),
-            },
-          ]
-        : []),
-      ...(entry.source_type && entry.source_type !== "local_file"
-        ? [{ label: sourceLabel(entry), className: sourceClass(entry) }]
-        : []),
-      ...(entry.sharing_policy?.status === "blocked"
-        ? [
-            {
-              label: `${sharingPolicyLabel(entry)}: ${entry.sharing_policy.label}`,
-              className: sharingPolicyClass(entry.sharing_policy),
-            },
-          ]
-        : []),
-      { label: `${entry.file_count} files`, className: "status-neutral" },
-      {
-        label: formatBytes(entry.total_file_bytes),
-        className: "status-neutral",
-      },
-      ...(entryIsAdult(entry)
-        ? [{ label: "18+", className: "status-warn" }]
-        : []),
-    ];
-    const seen = new Set<string>();
-    return candidates.filter((pill) => {
-      const key = pill.label.toLowerCase();
-      if (!pill.label || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  ): Array<{ label: string; value: string; className?: string }> => {
+    const rows: Array<{ label: string; value: string; className?: string }> = [];
+    const addRow = (label: string, value: string | null | undefined, className?: string) => {
+      const normalized = String(value || "").trim();
+      if (!normalized) return;
+      rows.push({ label, value: normalized, className });
+    };
+
+    addRow("Library", entryStatusLabel(entry), entryStatusClass(entry));
+    addRow("Exchange", entryPublicLabel(entry), entryPublicClass(entry));
+    addRow("Source", sourceLabel(entry), sourceClass(entry));
+    addRow("Sharing", librarySharingLabel(entry), librarySharingClass(entry));
+    addRow("Files", `${entry.file_count}`, "status-neutral");
+    addRow("Payload", formatBytes(entry.total_file_bytes), "status-neutral");
+    if (entryIsAdult(entry)) addRow("Content", "18+", "status-warn");
+    if (entry.sharing_policy?.status === "blocked") {
+      addRow("Policy", entry.sharing_policy.label, sharingPolicyClass(entry.sharing_policy));
+    }
+    return rows;
   };
   const [addEntryModalOpen, setAddEntryModalOpen] = useState(false);
   const [editEntryDetails, setEditEntryDetails] = useState(false);
@@ -4461,6 +4756,10 @@ function OnlineLibraryPanel({
       "mcdf-creator-subscriptions-changed",
       refreshSubscriptions,
     );
+    window.addEventListener(
+      "mcdf-package-subscriptions-changed",
+      refreshSubscriptions,
+    );
     return () => {
       window.removeEventListener("mcdf-open-add-entry", openAddEntry);
       window.removeEventListener(
@@ -4477,6 +4776,10 @@ function OnlineLibraryPanel({
         "mcdf-creator-subscriptions-changed",
         refreshSubscriptions,
       );
+      window.removeEventListener(
+        "mcdf-package-subscriptions-changed",
+        refreshSubscriptions,
+      );
     };
   }, []);
 
@@ -4491,7 +4794,7 @@ function OnlineLibraryPanel({
   const availableLibraryTags = Array.from(
     new Set(
       combinedEntries
-        .flatMap((entry) => entry.tags || [])
+        .flatMap((entry) => stringArray(entry.tags))
         .map((tag) => tag.trim().toLowerCase())
         .filter(Boolean),
     ),
@@ -4522,7 +4825,7 @@ function OnlineLibraryPanel({
 
   const filteredEntries = combinedEntries.filter((entry) => {
     const haystack =
-      `${entry.title} ${entry.original_filename} ${entry.description} ${entry.tags.join(" ")} ${entry.component_kinds.join(" ")} ${entry.source_url || ""}`.toLowerCase();
+      `${entry.title || ""} ${entry.original_filename || ""} ${entry.description || ""} ${stringArray(entry.tags).join(" ")} ${stringArray(entry.component_kinds).join(" ")} ${entry.source_url || ""}`.toLowerCase();
     const matchesSearch =
       !librarySearch.trim() ||
       haystack.includes(librarySearch.trim().toLowerCase());
@@ -4543,7 +4846,7 @@ function OnlineLibraryPanel({
       (libraryFilter === "potentially_illegal" &&
         entry.sharing_policy?.classification === "potentially_illegal") ||
       entry.storage_state === libraryFilter;
-    const entryTags = (entry.tags || []).map((tag) => tag.toLowerCase());
+    const entryTags = stringArray(entry.tags).map((tag) => tag.toLowerCase());
     const matchesTagFilter = !libraryTagFilter || entryTags.includes(libraryTagFilter);
     const matchesFolderFilter = !libraryFolderFilter || entryTags.includes(libraryFolderFilter);
     return matchesSearch && matchesFilter && adultVisible && matchesTagFilter && matchesFolderFilter;
@@ -4581,6 +4884,9 @@ function OnlineLibraryPanel({
     source_type: "local_file",
     source_url: null,
     source_label: "Auto-import folder",
+    source_owner_public_id: existing?.source_owner_public_id || null,
+    source_owner_display_name: existing?.source_owner_display_name || null,
+    source_package_hash_blake3: existing?.source_package_hash_blake3 || null,
     remote_annotation: "Imported automatically from a configured folder.",
     missing_registry_percent: null,
     original_filename: candidate.original_filename,
@@ -4869,7 +5175,10 @@ function OnlineLibraryPanel({
         local_path: result.output_path,
         source_type: "local_file",
         source_label: "Downloaded from Exchange",
-        remote_annotation: "Downloaded from a public Exchange entry.",
+        source_owner_public_id: entry.source_owner_public_id || (entry.package_hash_blake3 ? publicPackagesByHash.get(entry.package_hash_blake3)?.owner_public_id : null) || null,
+        source_owner_display_name: entry.source_owner_display_name || (entry.package_hash_blake3 ? publicPackagesByHash.get(entry.package_hash_blake3)?.owner_display_name : null) || null,
+        source_package_hash_blake3: entry.source_package_hash_blake3 || entry.package_hash_blake3 || null,
+        remote_annotation: "Downloaded from a public Exchange entry. You can keep, sync, and export it, but only the original owner can publish this package back to the Exchange.",
         storage_state: "online",
         last_checked_at: new Date().toISOString(),
         notes: [
@@ -4918,11 +5227,13 @@ function OnlineLibraryPanel({
     entry: LocalMcdfEntry,
     outputPath: string,
   ): Promise<ArchiveDownloadResult> => {
-    if (entry.source_url && entry.source_type !== "local_file") {
-      return invoke<ArchiveDownloadResult>("download_remote_mcdf_to_file", {
-        sourceUrl: entry.source_url,
+    const manifestPath = entry.download_url || entry.manifest_url || "";
+    if (entry.storage_state === "subscribed" && manifestPath) {
+      return invoke<ArchiveDownloadResult>("download_package_from_exchange_index", {
+        indexUrl,
+        packageManifestPath: manifestPath,
+        serverUrl: configuredArchiveHost(),
         outputPath,
-        expectedPackageHash: entry.package_hash_blake3 || null,
       });
     }
     if (localEntryHasLocalFile(entry)) {
@@ -4936,13 +5247,11 @@ function OnlineLibraryPanel({
         package_hash_blake3: entry.package_hash_blake3 || "",
       };
     }
-    const manifestPath = entry.download_url || entry.manifest_url || "";
-    if (entry.storage_state === "subscribed" && manifestPath) {
-      return invoke<ArchiveDownloadResult>("download_package_from_exchange_index", {
-        indexUrl,
-        packageManifestPath: manifestPath,
-        serverUrl: configuredArchiveHost(),
+    if (entry.source_url && entry.source_type !== "local_file") {
+      return invoke<ArchiveDownloadResult>("download_remote_mcdf_to_file", {
+        sourceUrl: entry.source_url,
         outputPath,
+        expectedPackageHash: entry.package_hash_blake3 || null,
       });
     }
     throw new Error(
@@ -5019,8 +5328,8 @@ function OnlineLibraryPanel({
         percent: 20,
         label: "Syncing source",
         detail: entry.source_url
-          ? "Downloading the original internet source into the local library cache."
-          : "Downloading the Exchange package into the local library cache.",
+          ? "Downloading the original internet source into a synced package cache."
+          : "Rebuilding the Exchange package into a synced package cache.",
       },
     });
     setLoading(true);
@@ -5037,9 +5346,13 @@ function OnlineLibraryPanel({
           ? localEntryId(result.output_path)
           : entry.id,
         local_path: result.output_path,
-        remote_annotation: entry.source_url
-          ? "Synced from the original internet source. The source URL is still kept for future refreshes."
-          : "Synced from the public Exchange package manifest.",
+        source_url: entry.storage_state === "subscribed" ? null : entry.source_url,
+        source_label: entry.storage_state === "subscribed" ? "Synced Exchange item" : entry.source_label,
+        remote_annotation: entry.storage_state === "subscribed"
+          ? "Temporarily cached from the public Exchange package manifest. You can inspect and export it while cached, but only the original owner can publish or re-share it."
+          : entry.source_url
+            ? "Temporarily cached from the original internet source. The source URL is still kept so it can be refreshed later."
+            : "Temporarily cached from the public Exchange package manifest.",
         storage_state: "online",
         last_checked_at: new Date().toISOString(),
         description: entry.description || info.description || "",
@@ -5049,7 +5362,7 @@ function OnlineLibraryPanel({
         component_kinds: kindsFromExtractedFiles(files),
         file_manifest: fileManifestFromExtractedFiles(files),
         notes: [
-          `Synced source to ${result.output_path}`,
+          `Temporarily cached source at ${result.output_path}`,
           ...(entry.notes || []),
         ],
       };
@@ -5070,10 +5383,10 @@ function OnlineLibraryPanel({
         status: "done",
         bytesDone: result.bytes_written,
         bytesTotal: result.bytes_written,
-        message: `Synced to ${result.output_path}`,
+        message: `Cached temporarily at ${result.output_path}`,
         stage: { percent: 100, label: "Sync complete", detail: formatBytes(result.bytes_written) },
       });
-      setActionMessage(`Synced MCDF source to ${result.output_path}`);
+      setActionMessage(`Temporarily cached MCDF source at ${result.output_path}. Use Export when you want a permanent copy outside MCDF Manager.`);
     } catch (e) {
       const message = String(e);
       finishOperation(opId, {
@@ -5105,7 +5418,7 @@ function OnlineLibraryPanel({
   const exportLocalEntry = async (entry: LocalMcdfEntry) => {
     if (!entryHasLocalFile(entry)) {
       setError(
-        "This library entry has not been synced to this machine yet. Use Sync source first, or use Download MCDF to save directly from its source.",
+        "This library entry has not been temporarily cached on this machine yet. Use Sync source for inspection/export, or use Download MCDF to save a permanent copy directly from its source.",
       );
       return;
     }
@@ -5175,7 +5488,8 @@ function OnlineLibraryPanel({
       hasStoredClientAuth() &&
       !isRemoteEntry(entry) &&
       publishingRulesAccepted &&
-      entry.sharing_policy?.status !== "blocked",
+      entry.sharing_policy?.status !== "blocked" &&
+      !entryReshareBlockReason(entry),
     );
   const LibraryEntryActions = ({
     entry,
@@ -5228,7 +5542,7 @@ function OnlineLibraryPanel({
         label={
           entry.sharing_policy?.status === "blocked"
             ? "Publishing blocked by sharing policy"
-            : "Publish to The Eorzea Exchange"
+            : entryReshareBlockReason(entry) || "Publish to The Eorzea Exchange"
         }
         disabled={loading || !entryCanPublish(entry)}
         className="library-action-button"
@@ -5280,7 +5594,7 @@ function OnlineLibraryPanel({
         writePackageSubscriptions(nextPackageSubscriptions);
         removePackageSubscriptionSnapshot(selectedPackageHash);
       } else {
-        const matchedPackage = publicIndex?.packages.find(
+        const matchedPackage = publicPackages.find(
           (pkg) => pkg.package_hash_blake3 === selectedPackageHash,
         );
         const creatorId = matchedPackage
@@ -5311,17 +5625,26 @@ function OnlineLibraryPanel({
         "fetch_public_marketplace_index",
         { indexUrl },
       );
-      setPublicIndex(latest);
-      const online = new Set(
-        latest.packages.map((pkg) => pkg.package_hash_blake3),
+      const normalizedPackages = (Array.isArray(latest.packages) ? latest.packages : [])
+        .map((pkg) => normalizePublicIndexPackageSummary(pkg))
+        .filter((pkg): pkg is PublicIndexPackageSummary => Boolean(pkg));
+      setPublicIndex({ ...latest, packages: normalizedPackages });
+      const onlinePackages = new Map(
+        normalizedPackages.map((pkg) => [pkg.package_hash_blake3, pkg]),
       );
       const next = entries.map((entry) => {
-        if (
-          entry.package_hash_blake3 &&
-          online.has(entry.package_hash_blake3)
-        ) {
+        const publicPackage = entry.package_hash_blake3
+          ? onlinePackages.get(entry.package_hash_blake3)
+          : null;
+        if (publicPackage) {
           return {
             ...entry,
+            source_owner_public_id:
+              entry.source_owner_public_id || publicPackage.owner_public_id || null,
+            source_owner_display_name:
+              entry.source_owner_display_name || publicPackage.owner_display_name || null,
+            source_package_hash_blake3:
+              entry.source_package_hash_blake3 || publicPackage.package_hash_blake3,
             storage_state: "online" as LocalMcdfStorageState,
             last_checked_at: new Date().toISOString(),
           };
@@ -5509,6 +5832,11 @@ function OnlineLibraryPanel({
       setError(
         "Publishing requires a registered profile. This MCDF remains available in your local library.",
       );
+      return;
+    }
+    const reshareBlock = entryReshareBlockReason(entry);
+    if (reshareBlock) {
+      setError(reshareBlock);
       return;
     }
     if (!publishingRulesAccepted) {
@@ -5828,7 +6156,6 @@ function OnlineLibraryPanel({
                 <span>Size</span>
                 <span>Exchange</span>
                 <span>Sharing</span>
-                <span>Blocking file</span>
                 <span>18+</span>
                 <span>Tags / labels</span>
                 <span>Actions</span>
@@ -5859,7 +6186,7 @@ function OnlineLibraryPanel({
                     onClick={() => { selectEntry(entry); setLayersEntry(entry); }}
                     title="View MCDF layers and files"
                   >
-                    {entry.file_count} files
+                    {entry.file_count}
                   </button>
                   <button
                     type="button"
@@ -5877,19 +6204,11 @@ function OnlineLibraryPanel({
                   </button>
                   <button
                     type="button"
-                    className={`table-cell-button table-tick ${entry.sharing_policy?.status === "blocked" ? "no loud" : "yes quiet"}`}
-                    title={sharingPolicyDetailLabel(entry)}
+                    className={`table-cell-button table-tick ${librarySharingClass(entry)}`}
+                    title={entryReshareBlockReason(entry) || sharingPolicyDetailLabel(entry)}
                     onClick={() => selectEntry(entry)}
                   >
-                    {sharingPolicyLabel(entry)}
-                  </button>
-                  <button
-                    type="button"
-                    className="table-cell-button table-reason-file"
-                    title={sharingReasonFile(entry)}
-                    onClick={() => selectEntry(entry)}
-                  >
-                    {sharingReasonFile(entry)}
+                    {librarySharingLabel(entry)}
                   </button>
                   <button
                     type="button"
@@ -5948,7 +6267,7 @@ function OnlineLibraryPanel({
                         onClick={(event) => { event.stopPropagation(); selectEntry(entry); setLayersEntry(entry); }}
                         title="View MCDF layers and files"
                       >
-                        {entry.file_count} files
+                        {entry.file_count}
                       </button>{" "}
                       · {formatBytes(entry.total_file_bytes)}
                     </span>
@@ -6044,19 +6363,21 @@ function OnlineLibraryPanel({
                 }}
               />
             )}
-            <div className="entry-detail-pill-row">
-              {detailStatusPills(selectedEntry).map((pill) => (
-                <span
-                  key={`${pill.label}-${pill.className}`}
-                  className={`status-pill ${pill.className}`}
-                >
-                  {pill.label}
-                </span>
+            <div className="entry-detail-table" role="table" aria-label="Entry details">
+              {detailTableRows(selectedEntry).map((row) => (
+                <div className="entry-detail-table-row" role="row" key={`${row.label}-${row.value}`}>
+                  <span className="entry-detail-table-label" role="cell">{row.label}</span>
+                  <span
+                    className={`entry-detail-table-value ${row.className || ""}`}
+                    role="cell"
+                  >
+                    {row.value}
+                  </span>
+                </div>
               ))}
             </div>
             <div className="panel-title-row detail-title-row">
               <div>
-                <div className="eyebrow">Entry details</div>
                 <h2>
                   {selectedEntry.title && !selectedEntry.title.includes("\\")
                     ? selectedEntry.title
@@ -6125,7 +6446,7 @@ function OnlineLibraryPanel({
                   className="inline-link detail-files-link"
                   onClick={() => setLayersEntry(selectedEntry)}
                 >
-                  {selectedEntry.file_count} files
+                  {selectedEntry.file_count}
                 </button>
               </div>
             ) : (
@@ -6209,7 +6530,7 @@ function OnlineLibraryPanel({
                     sharing.
                   </p>
                   <div className="policy-match-list">
-                    {selectedEntry.sharing_policy.matches
+                    {(selectedEntry.sharing_policy.matches || [])
                       .slice(0, 6)
                       .map((match) => (
                         <div
@@ -6248,16 +6569,8 @@ function OnlineLibraryPanel({
                   </div>
                 </div>
               )}
-            <div className="detail-action-panel">
-              <div>
-                <div className="eyebrow">Entry actions</div>
-                <p className="empty-small">
-                  Share public Exchange entries, download directly from any source,
-                  sync internet sources into the Library, export local MCDFs, publish updates, or remove the record.
-                </p>
-              </div>
+            <div className="detail-action-panel detail-action-panel-compact">
               <LibraryEntryActions entry={selectedEntry} />
-
             </div>
             {!hasStoredClientAuth() && (
               <p className="empty-small">
@@ -6268,8 +6581,7 @@ function OnlineLibraryPanel({
               <div className="alert success">
                 <div className="font-semibold">Subscribed online MCDF</div>
                 <p className="empty-small">
-                  This Exchange item is tracked in My Library locally, but the
-                  MCDF has not been synced to this machine yet. Use Sync source to cache it inside the Library, or Download MCDF to save a direct copy without changing the Library record.
+                  This Exchange item is tracked in My Library with its cover and metadata only. Sync source creates a synced package cache for inspection and export. Download MCDF saves a direct permanent copy wherever you choose without changing the Library record.
                 </p>
                 <PrimaryButton
                   disabled={loading}
@@ -6355,7 +6667,7 @@ function SharedArchiveConnectModal({
   const [displayName, setDisplayName] = useState(
     localStorage.getItem("mcdf.publisher.displayName") || "",
   );
-  const [serverToken, setServerToken] = useState(storedAdminToken());
+  const [serverToken, setServerToken] = useState(archiveActionToken() || "");
   const [serverHealth, setServerHealth] = useState<CentralServerHealth | null>(
     null,
   );
@@ -6496,7 +6808,7 @@ function SharedArchiveConnectModal({
         );
       }
       if (serverToken.trim()) {
-        await saveAdminToken(serverToken.trim());
+        saveUploadToken(serverToken.trim());
       }
       if (!hasStoredClientAuth()) {
         const name = displayName.trim();
@@ -6571,7 +6883,7 @@ function SharedArchiveConnectModal({
             <Field
               value={serverToken}
               onChange={(e) => setServerToken(e.target.value)}
-              placeholder="Token"
+              placeholder="Upload token"
             />
           </div>
         )}
@@ -7000,7 +7312,7 @@ function FirstBootStorageModal({ onDone }: { onDone: () => void }) {
           </div>
         </div>
         <p>
-          MCDF Manager uses local folders for your Library, Exchange cache, and
+          MCDF Manager uses local folders for your Library, Exchange cache, synced package cache, and
           rebuilt downloads. You can use the defaults, choose new folders, or
           point the app at existing folders from another install.
         </p>
@@ -7202,6 +7514,18 @@ function PublicProfileModal({ onClose }: { onClose: () => void }) {
             <code>{publicKey ? shortHash(publicKey) : "Not registered"}</code>
           </div>
           <div>
+            <span>Access</span>
+            <strong>
+              {storedAdminToken().trim()
+                ? "Admin"
+                : storedUploadToken().trim()
+                  ? "Uploader"
+                  : hasStoredClientAuth()
+                    ? "Publisher"
+                    : "Not registered"}
+            </strong>
+          </div>
+          <div>
             <span>Profile</span>
             <strong>
               {registeredAt ? formatDate(registeredAt) : "Not registered"}
@@ -7338,18 +7662,9 @@ function SettingsPanel({
     invoke<StorageSettingsResponse>("get_storage_settings")
       .then((settings) => {
         setCacheDir(settings.exchange_cache_dir);
-        if (settings.admin_token?.trim()) {
-          const savedToken = settings.admin_token.trim();
-          setAdminToken(savedToken);
-          setSavedAdminToken(savedToken);
-          localStorage.setItem(ADMIN_TOKEN_KEY, savedToken);
-          localStorage.setItem(LEGACY_UPLOAD_TOKEN_KEY, savedToken);
-          window.dispatchEvent(new Event("mcdf-admin-token-changed"));
-        } else {
-          const localToken = storedAdminToken().trim();
-          setAdminToken(localToken);
-          setSavedAdminToken(localToken);
-        }
+        const localToken = storedAdminToken().trim();
+        setAdminToken(localToken);
+        setSavedAdminToken(localToken);
       })
       .catch((e) => setCacheDir(String(e)));
   }, []);
@@ -7890,7 +8205,7 @@ function SettingsPanel({
       const storedToken = storedAdminToken().trim();
       setSavedAdminToken(storedToken);
       setAdminToken(storedToken);
-      setTokenMessage(storedToken ? "Server token saved. Admin is now available." : "Server token cleared.");
+      setTokenMessage(storedToken ? "Admin/moderation token saved. Admin is now available." : "Admin/moderation token cleared.");
     } catch (error) {
       setTokenError(String(error));
     } finally {
@@ -7906,7 +8221,7 @@ function SettingsPanel({
     try {
       await saveAdminToken("");
       setSavedAdminToken("");
-      setTokenMessage("Server token cleared.");
+      setTokenMessage("Admin/moderation token cleared.");
     } catch (error) {
       setTokenError(String(error));
     } finally {
@@ -7980,7 +8295,7 @@ function SettingsPanel({
           </span>
         </div>
         <p className="empty-small">
-          This is the space used by the local library, Exchange cache, downloads, and app home folders on this machine.
+          This is the space used by the local library, Exchange cache, synced packages, downloads, and app home folders on this machine.
         </p>
         {storageUsage ? (
           <div className="storage-usage-table">
@@ -8027,7 +8342,7 @@ function SettingsPanel({
         </div>
         <div className="token-locked-state">
           <p className="empty-small">
-            Save an admin/server token to unlock the Admin area on this client.
+            Save an admin/moderation token to unlock the Admin area on this client.
             The token is stored in the selected MCDF Manager config and mirrored
             locally so the Admin pane appears immediately after a successful save.
           </p>
@@ -8040,7 +8355,7 @@ function SettingsPanel({
                 setTokenMessage(null);
                 setTokenError(null);
               }}
-              placeholder={tokenConfigured ? "Paste replacement token" : "Server token"}
+              placeholder={tokenConfigured ? "Paste replacement admin token" : "Admin/moderation token"}
             />
           </div>
           <div className="hero-actions">
@@ -8048,7 +8363,7 @@ function SettingsPanel({
               disabled={tokenSaving || (!adminToken.trim() && !savedAdminToken.trim()) || (!tokenHasChanges && tokenConfigured)}
               onClick={() => void saveSettingsAdminToken()}
             >
-              {tokenSaving ? "Saving…" : tokenConfigured ? "Save token changes" : "Save token"}
+              {tokenSaving ? "Saving…" : tokenConfigured ? "Save admin token changes" : "Save admin token"}
             </GhostButton>
             {tokenConfigured && (
               <GhostButton disabled={tokenSaving} onClick={() => void clearSettingsAdminToken()}>
@@ -9762,19 +10077,28 @@ function PublishedIndexPanel({
   const togglePackageSubscription = (
     pkg: PublicIndexPackageSummary | PublicPackageRecord,
   ) => {
-    const packageHash = pkg.package_hash_blake3;
-    const alreadySubscribed = packageSubscriptions.includes(packageHash);
-    const next = alreadySubscribed
-      ? packageSubscriptions.filter((item) => item !== packageHash)
-      : [packageHash, ...packageSubscriptions];
-    if (alreadySubscribed) {
-      removePackageSubscriptionSnapshot(packageHash);
-    } else {
-      rememberPackageSubscriptionSnapshot(pkg);
+    try {
+      const packageHash = String(pkg.package_hash_blake3 || "").trim();
+      if (!packageHash) {
+        setIndexError("This Exchange entry cannot be added to My Library because it is missing a package hash.");
+        return;
+      }
+      const alreadySubscribed = packageSubscriptions.includes(packageHash);
+      const next = alreadySubscribed
+        ? packageSubscriptions.filter((item) => item !== packageHash)
+        : [packageHash, ...packageSubscriptions];
+      if (alreadySubscribed) {
+        removePackageSubscriptionSnapshot(packageHash);
+      } else {
+        rememberPackageSubscriptionSnapshot(pkg);
+      }
+      setPackageSubscriptions(next);
+      writePackageSubscriptions(next);
+      window.dispatchEvent(new Event("mcdf-package-subscriptions-changed"));
+      window.dispatchEvent(new Event("mcdf-creator-subscriptions-changed"));
+    } catch (error) {
+      setIndexError(`Could not update My Library subscription: ${String(error)}`);
     }
-    setPackageSubscriptions(next);
-    writePackageSubscriptions(next);
-    window.dispatchEvent(new Event("mcdf-creator-subscriptions-changed"));
   };
   const rememberRecent = (hash: string) => {
     const next = [hash, ...recentHashes.filter((item) => item !== hash)].slice(
@@ -10303,7 +10627,7 @@ function PublishedIndexPanel({
   ).sort((a, b) => a[1].localeCompare(b[1]));
   const visiblePackages = packages.filter((pkg) => {
     const haystack =
-      `${pkg.title || ""} ${pkg.original_filename || ""} ${pkg.owner_display_name || ""} ${(pkg.tags || []).join(" ")} ${pkg.component_kinds.join(" ")}`.toLowerCase();
+      `${pkg.title || ""} ${pkg.original_filename || ""} ${pkg.owner_display_name || ""} ${stringArray(pkg.tags).join(" ")} ${stringArray(pkg.component_kinds).join(" ")}`.toLowerCase();
     const matchesSearch =
       !exchangeSearch.trim() ||
       haystack.includes(exchangeSearch.trim().toLowerCase());
@@ -10599,7 +10923,7 @@ function PublishedIndexPanel({
                         </strong>
                         <span>
                           {pkg.owner_display_name || "unknown creator"} ·{" "}
-                          {pkg.file_count} files ·{" "}
+                          {pkg.file_count} ·{" "}
                           {formatBytes(pkg.total_file_bytes)}
                         </span>
                         {exchangePackageTags(pkg).length > 0 && (
@@ -10847,7 +11171,7 @@ function PublishedIndexPanel({
               </div>
               <div className="detail-title-actions">
                 <span className="status-pill status-neutral">
-                  {selectedPublicPackage.file_count} files
+                  {selectedPublicPackage.file_count}
                 </span>
                 <IconButton
                   label="Close details"
