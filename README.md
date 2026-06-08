@@ -21,10 +21,10 @@ Download the newest build from the stable download release.
 
 | Platform | Download |
 |---|---:|
-| Windows x64 | [Download Windows build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-Windows-x86_64-latest.zip) |
-| macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
-| macOS Intel | [Download macOS Intel build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-macOS-Intel-latest.zip) |
-| Linux x64 | [Download Linux build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-Linux-x86_64-latest.zip) |
+| Windows x64 | [Download Windows build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/download/client-latest/MCDF-Manager-Windows-x86_64-latest.zip) |
+| macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/download/client-latest/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
+| macOS Intel | [Download macOS Intel build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/download/client-latest/MCDF-Manager-macOS-Intel-latest.zip) |
+| Linux x64 | [Download Linux build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/download/client-latest/MCDF-Manager-Linux-x86_64-latest.zip) |
 
 The `client-latest` download release also includes `checksums.txt` and `release-manifest.json` for verification.
 
