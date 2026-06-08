@@ -11,7 +11,8 @@
     "validate:public-text": "node scripts/validate-public-text.mjs",
     "validate:release-version": "node scripts/validate-release-version.mjs",
     "release:notes": "node scripts/generate-release-notes.mjs",
-    "release:manifest": "node scripts/write-release-manifest.mjs"
+    "release:manifest": "node scripts/write-release-manifest.mjs",
+    "validate:release-assets": "node scripts/validate-release-assets.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.0.0",

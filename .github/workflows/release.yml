@@ -276,6 +276,7 @@ jobs:
           done
 
           test -n "$(find packaged-assets -maxdepth 1 -name '*.zip' -print -quit)"
+          RELEASE_ASSET_DIR=packaged-assets RELEASE_VERSION="${RELEASE_VERSION}" pnpm run validate:release-assets
           (cd packaged-assets && sha256sum *.zip > checksums.txt)
           RELEASE_ASSET_DIR=packaged-assets pnpm run release:manifest
 
