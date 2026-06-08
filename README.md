@@ -15,24 +15,24 @@ MCDF Manager turns scattered `.mcdf` files, Google Drive links, share codes, pre
 
 ## Download
 
-Download the newest build from the latest GitHub release.
+Download the newest build from the stable download release.
 
-> Repository maintainers: replace `YOUR-ORG/MCDF-Manager` in these links with the real GitHub repository path. The release workflow also publishes stable `*-latest.zip` aliases so these links keep working across versions.
+> Repository maintainers: replace `YOUR-ORG/MCDF-Manager` in these links with the real GitHub repository path. These links use the dedicated `client-latest` download release, so they also work when the newest application build is published as a GitHub pre-release.
 
 | Platform | Download |
 |---|---:|
-| Windows x64 | [Download Windows build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-Windows-x86_64-latest.zip) |
-| macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
-| macOS Intel | [Download macOS Intel build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Intel-latest.zip) |
-| Linux x64 | [Download Linux build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-Linux-x86_64-latest.zip) |
+| Windows x64 | [Download Windows build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-Windows-x86_64-latest.zip) |
+| macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
+| macOS Intel | [Download macOS Intel build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-macOS-Intel-latest.zip) |
+| Linux x64 | [Download Linux build](https://github.com/YOUR-ORG/MCDF-Manager/releases/download/client-latest/MCDF-Manager-Linux-x86_64-latest.zip) |
 
-The latest release also includes `checksums.txt` and `release-manifest.json` for verification.
+The `client-latest` download release also includes `checksums.txt` and `release-manifest.json` for verification.
 
 ---
 
 ## Release asset names
 
-The release workflow publishes both versioned archives and stable latest aliases. The README download buttons use the stable names, so the links do not change from release to release.
+The release workflow publishes versioned archives on each build release and stable latest aliases on a dedicated `client-latest` download release. The README download buttons use the stable names there, so the links do not change from release to release and do not break when the newest build is a pre-release.
 
 Required latest aliases:
 

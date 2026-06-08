@@ -1,3 +1,15 @@
+## fix189 - release gating for packaged app changes
+
+- Updated the client release workflow so pushes to `main` only mint release packages when packaged application inputs change.
+- App release triggers now include `src/`, `src-tauri/`, `public/`, and build/package configuration files.
+- Documentation, screenshots, repository branding, helper scripts, and changelog-only commits no longer create new release packages by themselves.
+- Later app-code commits still release from the current head, so prior documentation commits are naturally included without producing their own release.
+
+## fix188 - operation sync build type
+
+- Added `sync` to the frontend operation kind union so Library source-sync progress compiles in CI.
+- This is a TypeScript-only build fix; no runtime behavior changed.
+
 ## fix185 - library/exchange table polish and browser-state reset
 
 - Prevent Library list-view action icons from overflowing the row.

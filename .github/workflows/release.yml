@@ -347,3 +347,53 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "${TAG_NAME}" packaged-assets/* --clobber
+
+      - name: Update stable latest download release
+        if: needs.metadata.outputs.draft != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_TAG_NAME: ${{ needs.metadata.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          # GitHub's /releases/latest/download/... endpoint intentionally ignores
+          # prereleases. The README download buttons therefore point to this
+          # stable tag instead: /releases/download/client-latest/<asset>.
+          # Every published client release refreshes the assets on this normal
+          # companion release, including main-branch prerelease builds.
+          LATEST_TAG="client-latest"
+          LATEST_TITLE="MCDF Manager Latest Downloads"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${LATEST_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${LATEST_TAG}" --force
+
+          cat > latest-release-body.md <<EOF
+          # MCDF Manager latest downloads
+
+          These assets are refreshed automatically from the newest packaged client build.
+
+          Source release: ${SOURCE_TAG_NAME}
+
+          Version/build: ${RELEASE_VERSION}
+
+          The stable README links use this release so downloads keep working even when the newest application build is published as a GitHub pre-release.
+          EOF
+
+          if gh release view "${LATEST_TAG}" >/dev/null 2>&1; then
+            gh release edit "${LATEST_TAG}" \
+              --title "${LATEST_TITLE}" \
+              --notes-file latest-release-body.md \
+              --latest
+          else
+            gh release create "${LATEST_TAG}" \
+              --title "${LATEST_TITLE}" \
+              --notes-file latest-release-body.md \
+              --latest
+          fi
+
+          latest_assets=(packaged-assets/*-latest.zip packaged-assets/checksums.txt packaged-assets/release-manifest.json)
+          gh release upload "${LATEST_TAG}" "${latest_assets[@]}" --clobber
