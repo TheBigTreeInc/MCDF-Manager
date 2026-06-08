@@ -23,7 +23,7 @@ type Tab =
   | "inspect"
   | "settings"
   | "admin";
-type OperationKind = "upload" | "download" | "scan" | "build";
+type OperationKind = "upload" | "download" | "scan" | "build" | "sync";
 type OperationStatus = "running" | "done" | "failed";
 type McdfIconName =
   | "access-requests"

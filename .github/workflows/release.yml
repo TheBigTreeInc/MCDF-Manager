@@ -6,6 +6,24 @@ on:
       - main
     tags:
       - 'client-v*'
+    # Only build/publish a new client release when files that can change the
+    # packaged desktop application have changed. Documentation, screenshots,
+    # repository branding, helper scripts, and other non-runtime files should
+    # not mint a new release by themselves. A later app-code change can still
+    # release from the current head and include those older commits.
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'tsconfig.node.json'
+      - 'tailwind.config.js'
+      - 'postcss.config.js'
   workflow_dispatch:
     inputs:
       version:

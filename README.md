@@ -13,6 +13,47 @@ MCDF Manager turns scattered `.mcdf` files, Google Drive links, share codes, pre
 
 ---
 
+## Download
+
+Download the newest build from the latest GitHub release.
+
+> Repository maintainers: replace `YOUR-ORG/MCDF-Manager` in these links with the real GitHub repository path. The release workflow also publishes stable `*-latest.zip` aliases so these links keep working across versions.
+
+| Platform | Download |
+|---|---:|
+| Windows x64 | [Download Windows build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-Windows-x86_64-latest.zip) |
+| macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
+| macOS Intel | [Download macOS Intel build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Intel-latest.zip) |
+| Linux x64 | [Download Linux build](https://github.com/YOUR-ORG/MCDF-Manager/releases/latest/download/MCDF-Manager-Linux-x86_64-latest.zip) |
+
+The latest release also includes `checksums.txt` and `release-manifest.json` for verification.
+
+---
+
+## Release asset names
+
+The release workflow publishes both versioned archives and stable latest aliases. The README download buttons use the stable names, so the links do not change from release to release.
+
+Required latest aliases:
+
+- `MCDF-Manager-Windows-x86_64-latest.zip`
+- `MCDF-Manager-macOS-Apple-Silicon-latest.zip`
+- `MCDF-Manager-macOS-Intel-latest.zip`
+- `MCDF-Manager-Linux-x86_64-latest.zip`
+
+The workflow validates these names before publishing a release.
+
+## Repository branding
+
+This repository includes ready-to-upload branding assets:
+
+- `docs/branding/repository-social-preview.png` — GitHub **Settings → General → Social preview** image.
+- `docs/branding/repository-icon.png` — square product icon for avatars, release pages, or external download pages.
+
+See [`docs/repository-branding.md`](docs/repository-branding.md) for the exact GitHub setup steps.
+
+---
+
 ## Why use MCDF Manager?
 
 Your character collection should feel like a wardrobe, not a folder of mystery files.
@@ -29,17 +70,6 @@ MCDF Manager helps you:
 - publish your own Exchange entries with creator ownership;
 - edit your published listing title, story, tags, and cover image;
 - inspect internal MCDF layers when you need advanced recovery or diagnostics.
-
----
-
-## Download
-
-| Platform | Download |
-|---|---:|
-| Windows x64 | [Download Windows build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-Windows-x86_64-latest.zip) |
-| macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
-| macOS Intel | [Download macOS Intel build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Intel-latest.zip) |
-| Linux x64 | [Download Linux build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-Linux-x86_64-latest.zip) |
 
 ---
 
@@ -105,6 +135,8 @@ MCDF Manager scans the package, reads layer metadata, calculates hashes, and let
 ## Preview framing
 
 A good listing starts with a good cover.
+
+MCDF Manager includes the same drag and zoom framing flow for Library previews and Exchange cover images. Frame once, save it, and the Library card, Exchange card, and detail view all use the same presentation.
 
 ---
 
