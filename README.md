@@ -34,17 +34,12 @@ MCDF Manager helps you:
 
 ## Download
 
-Download the newest build from the latest GitHub release.
-
-> Repository maintainers: replace `YOUR-ORG/MCDF-Manager` in these links with the real GitHub repository path. The release workflow also publishes stable `*-latest.zip` aliases so these links keep working across versions.
-
 | Platform | Download |
 |---|---:|
 | Windows x64 | [Download Windows build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-Windows-x86_64-latest.zip) |
 | macOS Apple Silicon | [Download macOS Apple Silicon build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Apple-Silicon-latest.zip) |
 | macOS Intel | [Download macOS Intel build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-macOS-Intel-latest.zip) |
 | Linux x64 | [Download Linux build](https://github.com/TheBigTreeInc/MCDF-Manager/releases/latest/download/MCDF-Manager-Linux-x86_64-latest.zip) |
-
 
 ---
 
@@ -110,8 +105,6 @@ MCDF Manager scans the package, reads layer metadata, calculates hashes, and let
 ## Preview framing
 
 A good listing starts with a good cover.
-
-MCDF Manager includes the same drag and zoom framing flow for Library previews and Exchange cover images. Frame once, save it, and the Library card, Exchange card, and detail view all use the same presentation.
 
 ---
 
