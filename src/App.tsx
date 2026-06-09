@@ -7097,18 +7097,20 @@ function SharedArchiveConnectModal({
       } catch {
         config = null;
       }
-      const needsToken = Boolean(
-        health.uploads_require_auth || config?.uploads?.requires_token,
+      const alreadyAuthorized = hasStoredClientAuth();
+      const needsTokenForRegistration = Boolean(
+        !alreadyAuthorized &&
+          (health.uploads_require_auth || config?.uploads?.requires_token),
       );
-      if (needsToken && !serverToken.trim()) {
+      if (needsTokenForRegistration && !serverToken.trim()) {
         throw new Error(
-          "This archive service requires an upload token before it can authorize this client.",
+          "This archive service requires an upload token before registering a new uploader.",
         );
       }
       if (serverToken.trim()) {
         saveUploadToken(serverToken.trim());
       }
-      if (!hasStoredClientAuth()) {
+      if (!alreadyAuthorized) {
         const name = displayName.trim();
         if (!name)
           throw new Error(
@@ -7176,7 +7178,7 @@ function SharedArchiveConnectModal({
             </div>
           </>
         )}
-        {tokenRequired && (
+        {!clientAuthorized && tokenRequired && (
           <div className="form-grid single-column">
             <Field
               value={serverToken}
